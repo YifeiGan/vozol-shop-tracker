@@ -1,0 +1,79 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function profilePath() {
+      return /databases/$(database)/documents/profiles/$(request.auth.uid);
+    }
+
+    function me() {
+      return get(profilePath()).data;
+    }
+
+    function hasProfile() {
+      return signedIn() && exists(profilePath());
+    }
+
+    function isManager() {
+      return hasProfile() && me().role == 'manager';
+    }
+
+    function canAccessShop(shopId) {
+      let shop = get(/databases/$(database)/documents/shops/$(shopId)).data;
+      return hasProfile() && (
+        shop.assigned_to == request.auth.uid ||
+        (isManager() && shop.team_id == me().team_id)
+      );
+    }
+
+    match /profiles/{userId} {
+      allow read: if signedIn() && (
+        request.auth.uid == userId ||
+        (isManager() && resource.data.team_id == me().team_id)
+      );
+
+      allow create: if signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.role == 'sales'
+        && request.resource.data.team_id is string
+        && request.resource.data.active == true
+        && request.resource.data.email == request.auth.token.email;
+
+      allow update: if signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.team_id == resource.data.team_id
+        && request.resource.data.active == resource.data.active;
+    }
+
+    match /shops/{shopId} {
+      allow read: if hasProfile() && (
+        resource.data.assigned_to == request.auth.uid ||
+        (isManager() && resource.data.team_id == me().team_id)
+      );
+
+      allow create: if hasProfile()
+        && request.resource.data.team_id == me().team_id
+        && (
+          me().role == 'manager' ||
+          request.resource.data.assigned_to == request.auth.uid
+        );
+
+      allow update: if hasProfile()
+        && (
+          resource.data.assigned_to == request.auth.uid ||
+          (isManager() && resource.data.team_id == me().team_id)
+        )
+        && request.resource.data.team_id == resource.data.team_id;
+
+      allow delete: if isManager() && resource.data.team_id == me().team_id;
+
+      match /visits/{visitId} {
+        allow read, create: if canAccessShop(shopId);
+      }
+    }
+  }
+}
