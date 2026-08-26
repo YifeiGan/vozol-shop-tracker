@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Search, Plus, X, ExternalLink, LogOut, History, Save, Users, Clipboard, Copy,
+  Search, Plus, X, ExternalLink, LogOut, Save, Users, Clipboard, Copy, Star,
 } from 'lucide-react';
 import {
   onAuthStateChanged,
@@ -39,12 +39,41 @@ const emptyShop = () => ({
   name: '', address: '', city: 'Orlando', phone: '', tier: '', status: 'not_visited',
   is_chain: false, chain_name: '', chain_total_stores: '', staff_contact: '', owner_name: '',
   owner_schedule: '', contact_role: '', store_number: '', restock_status: '', distributor: '',
-  test_case_placed: false, traffic_note: '', brands_note: '', next_plan: '', source_url: '',
+  test_case_placed: false, traffic_note: '', brands_note: '', next_plan: '',
+  next_plan_date: '', next_plan_time: '', source_url: '', starred: false,
 });
-const emptyVisit = () => ({
-  visit_date: new Date().toISOString().slice(0, 10),
-  units: '', feedback: '', decision_maker: '', restock_status: '', test_case_placed: false, next_plan: '',
-});
+
+function formatNextPlan(shop) {
+  const date = (shop?.next_plan_date || '').trim();
+  if (!date) return '';
+  const time = (shop?.next_plan_time || '').trim();
+  return time ? `${date} ${time}` : date;
+}
+
+function parsePlanTime(timeStr) {
+  const m = String(timeStr || '').trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return { hour: '', minute: '' };
+  return {
+    hour: String(Number(m[1])).padStart(2, '0'),
+    minute: m[2],
+  };
+}
+
+function combinePlanTime(hour, minute) {
+  if (!hour) return '';
+  return `${hour}:${minute || '00'}`;
+}
+
+const PLAN_HOURS = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0'));
+const PLAN_MINUTES = ['00', '15', '30', '45'];
+const TIER_RANK = { S: 0, 'A+': 1, A: 2, B: 3, '': 4 };
+const SORT_OPTIONS = [
+  { value: 'starred', label: '星标店铺' },
+  { value: 'updated_at', label: '更新时间' },
+  { value: 'created_at', label: '创建时间' },
+  { value: 'next_follow_up', label: '下次跟进时间（由近到远）' },
+  { value: 'tier', label: '分级' },
+];
 
 function authMessage(err) {
   const code = err?.code || '';
@@ -60,8 +89,88 @@ function authMessage(err) {
 function timeValue(value) {
   if (!value) return 0;
   if (typeof value.toMillis === 'function') return value.toMillis();
+  if (value instanceof Date) return value.getTime();
   if (typeof value === 'string') return Date.parse(value) || 0;
   return 0;
+}
+
+function nextFollowUpValue(shop) {
+  const date = (shop?.next_plan_date || '').trim();
+  if (!date) return Number.MAX_SAFE_INTEGER;
+  const time = (shop?.next_plan_time || '00:00').trim();
+  const ts = Date.parse(`${date}T${time}`);
+  return Number.isNaN(ts) ? (Date.parse(date) || Number.MAX_SAFE_INTEGER) : ts;
+}
+
+function tierRank(tier) {
+  return TIER_RANK[tier ?? ''] ?? 4;
+}
+
+function todayDateKey(date = new Date()) {
+  const d = date instanceof Date ? date : new Date(date);
+  if (Number.isNaN(d.getTime())) return '';
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function shopUpdatedDateKey(shop) {
+  return localDateKeyFromTimestamp(shop?.updated_at);
+}
+
+function localDateKeyFromTimestamp(value) {
+  if (!value) return '';
+  if (typeof value.toDate === 'function') return todayDateKey(value.toDate());
+  if (value instanceof Date) return todayDateKey(value);
+  if (typeof value === 'string' || typeof value === 'number') return todayDateKey(new Date(value));
+  return '';
+}
+
+function isTierAPlus(tier) {
+  return tier === 'S' || tier === 'A+' || tier === 'A';
+}
+
+function buildDailyReportText(shopList) {
+  const today = todayDateKey();
+  const todayShops = shopList.filter((s) => shopUpdatedDateKey(s) === today);
+  const visitCount = todayShops.length;
+  const aPlusCount = todayShops.filter((s) => isTierAPlus(s.tier)).length;
+  const testCaseCount = todayShops.filter((s) => s.test_case_placed).length;
+  return [
+    `日期：${today}`,
+    `访店数量：${visitCount}`,
+    `A级及以上门店数：${aPlusCount}`,
+    `样机投放数量：`,
+    `试抽盒投放数量：${testCaseCount || ''}`,
+    `遇到的问题：`,
+  ].join('\n');
+}
+
+function sortShops(list, sortBy) {
+  const items = [...list];
+  switch (sortBy) {
+    case 'created_at':
+      return items.sort((a, b) => timeValue(b.created_at) - timeValue(a.created_at));
+    case 'next_follow_up':
+      return items.sort((a, b) => {
+        const diff = nextFollowUpValue(a) - nextFollowUpValue(b);
+        return diff || (a.name || '').localeCompare(b.name || '');
+      });
+    case 'tier':
+      return items.sort((a, b) => {
+        const diff = tierRank(a.tier) - tierRank(b.tier);
+        return diff || (a.name || '').localeCompare(b.name || '');
+      });
+    case 'starred':
+      return items.sort((a, b) => {
+        const diff = Number(b.starred) - Number(a.starred);
+        return diff || timeValue(b.updated_at) - timeValue(a.updated_at);
+      });
+    case 'updated_at':
+    default:
+      return items.sort((a, b) => timeValue(b.updated_at) - timeValue(a.updated_at));
+  }
 }
 
 function withoutUndefined(obj) {
@@ -117,8 +226,7 @@ async function fetchTeamData(currentUser) {
     '读取门店超时。多半是浏览器连不上 Firestore，请硬刷新后再试；若仍失败，换 Chrome 打开同一网址。',
   );
   const shops = shopSnap.docs
-    .map((item) => ({ id: item.id, ...item.data() }))
-    .sort((a, b) => timeValue(b.updated_at) - timeValue(a.updated_at));
+    .map((item) => ({ id: item.id, ...item.data() }));
   let members = [];
   if (p.role === 'manager') {
     const memberSnap = await getDocs(query(collection(db, 'profiles'), where('team_id', '==', p.team_id)));
@@ -204,13 +312,13 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [search, setSearch] = useState('');
+  const [sortBy, setSortBy] = useState('created_at');
+  const [dailyReportText, setDailyReportText] = useState('');
+  const [dailyCopied, setDailyCopied] = useState(false);
   const [selected, setSelected] = useState(null);
   const [draft, setDraft] = useState(null);
-  const [visits, setVisits] = useState([]);
-  const [showHistory, setShowHistory] = useState(false);
   const [reportText, setReportText] = useState('');
   const [copied, setCopied] = useState(false);
-  const [visit, setVisit] = useState(emptyVisit());
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -271,18 +379,27 @@ export default function App() {
 
   async function openShop(shop) {
     setSelected(shop.id);
-    setDraft({ ...shop, chain_total_stores: shop.chain_total_stores ?? '' });
-    setShowHistory(false);
+    setDraft({
+      ...shop,
+      chain_total_stores: shop.chain_total_stores ?? '',
+      next_plan_date: shop.next_plan_date || '',
+      next_plan_time: shop.next_plan_time || '',
+      starred: Boolean(shop.starred),
+    });
     setReportText('');
     setCopied(false);
+  }
+
+  async function toggleStar(shop, e) {
+    e?.stopPropagation?.();
+    const next = !shop.starred;
     try {
-      const visitSnap = await getDocs(collection(db, 'shops', shop.id, 'visits'));
-      setVisits(visitSnap.docs
-        .map((item) => ({ id: item.id, ...item.data() }))
-        .sort((a, b) => {
-          const byDate = String(b.visit_date || '').localeCompare(String(a.visit_date || ''));
-          return byDate || timeValue(b.created_at) - timeValue(a.created_at);
-        }));
+      await updateDoc(doc(db, 'shops', shop.id), {
+        starred: next,
+        updated_at: serverTimestamp(),
+      });
+      setShops((prev) => prev.map((s) => (s.id === shop.id ? { ...s, starred: next, updated_at: new Date() } : s)));
+      if (selected === shop.id && draft) setDraft({ ...draft, starred: next });
     } catch (error) {
       alert(error.message);
     }
@@ -291,17 +408,20 @@ export default function App() {
   function openNew() {
     setSelected('new');
     setDraft(emptyShop());
-    setVisits([]);
     setReportText('');
     setCopied(false);
   }
 
   async function saveShop() {
     if (!draft.name.trim() || saving) return;
+    const nextPlanText = formatNextPlan(draft);
     const payload = withoutUndefined({
       ...draft,
       name: draft.name.trim(),
       chain_total_stores: draft.chain_total_stores === '' ? null : Number(draft.chain_total_stores),
+      next_plan_date: draft.next_plan_date || '',
+      next_plan_time: draft.next_plan_date ? (draft.next_plan_time || '') : '',
+      next_plan: nextPlanText,
     });
     delete payload.id;
     delete payload.created_at;
@@ -316,7 +436,7 @@ export default function App() {
           created_at: serverTimestamp(),
           updated_at: serverTimestamp(),
         });
-        setShops((prev) => [{ id: ref.id, ...payload, assigned_to: payload.assigned_to, team_id: payload.team_id, updated_at: new Date() }, ...prev]);
+        setShops((prev) => [{ id: ref.id, ...payload, assigned_to: payload.assigned_to, team_id: payload.team_id, created_at: new Date(), updated_at: new Date() }, ...prev]);
       } else {
         await updateDoc(doc(db, 'shops', selected), {
           ...payload,
@@ -336,53 +456,30 @@ export default function App() {
     }
   }
 
-  async function addVisit() {
-    if (selected === 'new') return;
-    try {
-      await addDoc(collection(db, 'shops', selected, 'visits'), withoutUndefined({
-        sales_id: user.uid,
-        ...visit,
-        units: Number(visit.units) || 0,
-        created_at: serverTimestamp(),
-      }));
-      const patch = {
-        status: 'visited',
-        restock_status: visit.restock_status || draft.restock_status,
-        test_case_placed: visit.test_case_placed || draft.test_case_placed,
-        next_plan: visit.next_plan || draft.next_plan,
-      };
-      await updateDoc(doc(db, 'shops', selected), {
-        ...patch,
-        updated_at: serverTimestamp(),
-      });
-      const nextDraft = { ...draft, ...patch, id: selected };
-      setDraft(nextDraft);
-      setShops((prev) => prev.map((s) => (s.id === selected ? { ...s, ...patch, updated_at: new Date() } : s)));
-      setVisit(emptyVisit());
-      await openShop(nextDraft);
-    } catch (error) {
-      alert(error.message);
-    }
-  }
-
   function buildReport() {
     if (!draft) return;
-    const owner = visit.decision_maker || draft.owner_name || draft.staff_contact || '未知';
-    const restock = visit.restock_status || draft.restock_status || '未知';
-    const remarkParts = [draft.owner_schedule, draft.traffic_note, draft.brands_note, visit.feedback, visit.next_plan || draft.next_plan]
-      .map((x) => (x || '').trim())
+    const lines = [
+      ['店铺名称', draft.name],
+      ['城市', draft.city],
+      ['地址', draft.address],
+      ['评级', draft.tier || '未分级'],
+      ['拜访状态', STATUS[draft.status] || draft.status],
+      ['老板', draft.owner_name],
+      ['店员', draft.staff_contact],
+      ['老板到店规律', draft.owner_schedule],
+      ['主要拿货二级批发商', draft.distributor],
+      ['进货情况', draft.restock_status],
+      ['是否放 Test Case', draft.test_case_placed ? '是' : '否'],
+      ['热卖品牌明细', draft.brands_note],
+      ['备注', draft.traffic_note],
+      ['下次拜访计划', formatNextPlan(draft)],
+    ]
+      .map(([label, value]) => {
+        const text = String(value ?? '').trim();
+        return text ? `${label}：${text}` : null;
+      })
       .filter(Boolean);
-    const remarks = remarkParts.length ? remarkParts.join('，') : '无';
-    const address = [draft.address, draft.city, draft.state || 'FL'].filter(Boolean).join(', ');
-    setReportText([
-      `店名：${draft.name || '未知'}`,
-      `地址：${address || '未知'}`,
-      `老板：${owner}`,
-      `电话：${draft.phone || '未知'}`,
-      `店面：${draft.store_number || '未知'}`,
-      `进货：${restock}`,
-      `备注：${remarks}`,
-    ].join('\n'));
+    setReportText(lines.join('\n'));
     setCopied(false);
   }
 
@@ -397,10 +494,27 @@ export default function App() {
     }
   }
 
+  function generateDailyReport() {
+    setDailyReportText(buildDailyReportText(shops));
+    setDailyCopied(false);
+  }
+
+  async function copyDailyReport() {
+    if (!dailyReportText) return;
+    try {
+      await navigator.clipboard.writeText(dailyReportText);
+      setDailyCopied(true);
+      setTimeout(() => setDailyCopied(false), 1500);
+    } catch {
+      alert('复制失败，请手动选择文本复制');
+    }
+  }
+
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim();
-    return shops.filter((s) => !q || [s.name, s.address, s.city, s.owner_name, s.staff_contact].some((v) => (v || '').toLowerCase().includes(q)));
-  }, [shops, search]);
+    const matched = shops.filter((s) => !q || [s.name, s.address, s.city, s.owner_name, s.staff_contact].some((v) => (v || '').toLowerCase().includes(q)));
+    return sortShops(matched, sortBy);
+  }, [shops, search, sortBy]);
 
   if (!configured) {
     return (
@@ -452,7 +566,25 @@ export default function App() {
           <input placeholder="搜索店名 / 地址 / 城市 / 联系人" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
         <button className="primary" type="button" onClick={openNew}><Plus size={15} />添加店铺</button>
-        <button type="button" disabled title="后续版本：导出今日 Excel">导出今日表格（预留）</button>
+        <select className="sort-select" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
+          {SORT_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
+        <button type="button" onClick={generateDailyReport}><Clipboard size={15} />生成今日汇报</button>
+      </section>
+      <section className="daily-report">
+        <textarea
+          value={dailyReportText}
+          onChange={(e) => setDailyReportText(e.target.value)}
+          placeholder={'点击「生成今日汇报」自动填充，可在此编辑\n\n日期：\n访店数量：\nA级及以上门店数：\n样机投放数量：\n试抽盒投放数量：\n遇到的问题：'}
+          rows={8}
+        />
+        {dailyReportText && (
+          <button type="button" onClick={copyDailyReport}>
+            <Copy size={14} />{dailyCopied ? '已复制' : '复制汇报'}
+          </button>
+        )}
       </section>
       {profile?.role === 'manager' && (
         <div className="manager-note">Manager 模式：当前可查看团队全部门店 · {members.length} 个账号</div>
@@ -460,11 +592,21 @@ export default function App() {
       <div className="count">共 {filtered.length} 家店铺</div>
       <section>
         {filtered.map((s) => (
-          <article className="card" key={s.id} onClick={() => openShop(s)}>
+          <article className={s.starred ? 'card starred' : 'card'} key={s.id} onClick={() => openShop(s)}>
             <div className="cardtop">
-              <div>
-                <strong>{s.name}</strong>
-                <small>{s.city}{s.address ? ` · ${s.address}` : ' · 地址待补充'}</small>
+              <div className="cardtitle">
+                <button
+                  type="button"
+                  className={s.starred ? 'star-btn active' : 'star-btn'}
+                  aria-label={s.starred ? '取消星标' : '加星标'}
+                  onClick={(e) => toggleStar(s, e)}
+                >
+                  <Star size={16} fill={s.starred ? 'currentColor' : 'none'} />
+                </button>
+                <div>
+                  <strong>{s.name}</strong>
+                  <small>{s.city}{s.address ? ` · ${s.address}` : ' · 地址待补充'}</small>
+                </div>
               </div>
               <div>
                 <span className="chip">{s.tier || '未分级'}</span>
@@ -472,12 +614,15 @@ export default function App() {
               </div>
             </div>
             <div className="meta">
+              {s.starred && <span className="star-tag">重点关注</span>}
               {s.owner_name && <span>老板 {s.owner_name}</span>}
               {s.distributor && <span>批发商 {s.distributor}</span>}
               {s.test_case_placed && <span>已放 Test Case</span>}
             </div>
+            {s.traffic_note && <p className="remark">{s.traffic_note}</p>}
             {s.brands_note && <p>{s.brands_note}</p>}
-            {s.next_plan && <p className="next">下次：{s.next_plan}</p>}
+            {formatNextPlan(s) && <p className="next">下次：{formatNextPlan(s)}</p>}
+            {!formatNextPlan(s) && s.next_plan && <p className="next">下次：{s.next_plan}</p>}
           </article>
         ))}
       </section>
@@ -496,7 +641,6 @@ export default function App() {
                 </select>
               </Field>
               <Field wide label="地址"><input value={draft.address} onChange={(e) => setDraft({ ...draft, address: e.target.value })} /></Field>
-              <Field label="电话"><input value={draft.phone} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} /></Field>
               <Field label="评级">
                 <select value={draft.tier} onChange={(e) => setDraft({ ...draft, tier: e.target.value })}>
                   {['', 'S', 'A+', 'A', 'B'].map((x) => <option key={x} value={x}>{x || '未分级'}</option>)}
@@ -505,6 +649,12 @@ export default function App() {
               <Field label="拜访状态">
                 <select value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value })}>
                   {Object.entries(STATUS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                </select>
+              </Field>
+              <Field label="星标（定期重点关注）">
+                <select value={draft.starred ? 'yes' : 'no'} onChange={(e) => setDraft({ ...draft, starred: e.target.value === 'yes' })}>
+                  <option value="no">否</option>
+                  <option value="yes">是</option>
                 </select>
               </Field>
               <Field label="老板 / Decision maker"><input value={draft.owner_name} onChange={(e) => setDraft({ ...draft, owner_name: e.target.value })} /></Field>
@@ -528,54 +678,57 @@ export default function App() {
                 </Field>
               )}
               <Field wide label="热卖品牌明细"><textarea value={draft.brands_note} onChange={(e) => setDraft({ ...draft, brands_note: e.target.value })} /></Field>
-              <Field wide label="客流 / 位置信息"><textarea value={draft.traffic_note} onChange={(e) => setDraft({ ...draft, traffic_note: e.target.value })} /></Field>
-              <Field wide label="下次拜访计划"><input value={draft.next_plan} onChange={(e) => setDraft({ ...draft, next_plan: e.target.value })} /></Field>
+              <Field wide label="备注"><textarea value={draft.traffic_note} onChange={(e) => setDraft({ ...draft, traffic_note: e.target.value })} /></Field>
+              <Field label="下次拜访日期（可选）">
+                <input
+                  type="date"
+                  value={draft.next_plan_date || ''}
+                  onChange={(e) => setDraft({
+                    ...draft,
+                    next_plan_date: e.target.value,
+                    next_plan_time: e.target.value ? draft.next_plan_time : '',
+                  })}
+                />
+              </Field>
+              <Field label="下次拜访时间（可选）">
+                <div className="time-row">
+                  <select
+                    value={parsePlanTime(draft.next_plan_time).hour}
+                    disabled={!draft.next_plan_date}
+                    onChange={(e) => setDraft({
+                      ...draft,
+                      next_plan_time: combinePlanTime(e.target.value, parsePlanTime(draft.next_plan_time).minute),
+                    })}
+                  >
+                    <option value="">时</option>
+                    {PLAN_HOURS.map((h) => <option key={h} value={h}>{h}</option>)}
+                  </select>
+                  <select
+                    value={parsePlanTime(draft.next_plan_time).minute}
+                    disabled={!draft.next_plan_date}
+                    onChange={(e) => setDraft({
+                      ...draft,
+                      next_plan_time: combinePlanTime(parsePlanTime(draft.next_plan_time).hour, e.target.value),
+                    })}
+                  >
+                    <option value="">分</option>
+                    {PLAN_MINUTES.map((m) => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </div>
+              </Field>
             </div>
-            {selected !== 'new' && (
-              <>
-                <div className="visitbox">
-                  <h3>拜访记录 <small>明面显示最近 3 次</small></h3>
-                  <div className="visitform">
-                    <input type="date" value={visit.visit_date} onChange={(e) => setVisit({ ...visit, visit_date: e.target.value })} />
-                    <input placeholder="进店支数" value={visit.units} onChange={(e) => setVisit({ ...visit, units: e.target.value })} />
-                    <input placeholder="Decision maker" value={visit.decision_maker} onChange={(e) => setVisit({ ...visit, decision_maker: e.target.value })} />
-                    <input placeholder="进货情况" value={visit.restock_status} onChange={(e) => setVisit({ ...visit, restock_status: e.target.value })} />
-                    <textarea placeholder="Visit feedback / 当日动态" value={visit.feedback} onChange={(e) => setVisit({ ...visit, feedback: e.target.value })} />
-                    <input placeholder="下次计划" value={visit.next_plan} onChange={(e) => setVisit({ ...visit, next_plan: e.target.value })} />
-                    <label className="check">
-                      <input type="checkbox" checked={visit.test_case_placed} onChange={(e) => setVisit({ ...visit, test_case_placed: e.target.checked })} />
-                      本次放 Test Case
-                    </label>
-                    <button type="button" onClick={addVisit}><Plus size={14} />记录本次拜访</button>
-                  </div>
-                  <div className="history">
-                    {visits.slice(0, showHistory ? 10 : 3).map((v) => (
-                      <div key={v.id}>
-                        <b>{v.visit_date}</b> · {v.units}支 {v.decision_maker && `· ${v.decision_maker}`}
-                        <p>{v.feedback || '无反馈备注'}</p>
-                      </div>
-                    ))}
-                    {visits.length > 3 && (
-                      <button type="button" onClick={() => setShowHistory(!showHistory)}>
-                        <History size={14} />{showHistory ? '收起' : '查看最近 10 次'}
-                      </button>
-                    )}
-                  </div>
+            <div className="visitbox">
+              <h3>门店信息文本</h3>
+              <button type="button" onClick={buildReport}><Clipboard size={14} />一键生成</button>
+              {reportText && (
+                <div style={{ marginTop: 10 }}>
+                  <textarea readOnly value={reportText} style={{ minHeight: 160, whiteSpace: 'pre-wrap' }} />
+                  <button type="button" style={{ marginTop: 8 }} onClick={copyReport}>
+                    <Copy size={14} />{copied ? '已复制' : '复制文本'}
+                  </button>
                 </div>
-                <div className="visitbox">
-                  <h3>拜访播报</h3>
-                  <button type="button" onClick={buildReport}><Clipboard size={14} />一键生成播报文本</button>
-                  {reportText && (
-                    <div style={{ marginTop: 10 }}>
-                      <textarea readOnly value={reportText} style={{ minHeight: 160, whiteSpace: 'pre-wrap' }} />
-                      <button type="button" style={{ marginTop: 8 }} onClick={copyReport}>
-                        <Copy size={14} />{copied ? '已复制' : '复制播报'}
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
+              )}
+            </div>
             <footer>
               <button className="primary" type="button" onClick={saveShop} disabled={saving}>
                 <Save size={15} />{saving ? '保存中…' : '保存门店'}

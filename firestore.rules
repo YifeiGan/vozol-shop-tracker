@@ -72,7 +72,7 @@ service cloud.firestore {
       allow delete: if isManager() && resource.data.team_id == me().team_id;
 
       match /visits/{visitId} {
-        allow read, create: if canAccessShop(shopId);
+        allow read, create, update, delete: if canAccessShop(shopId);
       }
     }
   }
