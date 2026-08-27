@@ -1,16 +1,22 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Search, Plus, X, ExternalLink, LogOut, Save, Users, Clipboard, Copy, Star,
+  Search, Plus, X, ExternalLink, LogOut, Save, Users, Clipboard, Copy, Star, Map, List, Eye, EyeOff,
 } from 'lucide-react';
 import {
+  createUserWithEmailAndPassword,
+  EmailAuthProvider,
   onAuthStateChanged,
+  reauthenticateWithCredential,
   signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
+  updatePassword,
+  updateProfile,
 } from 'firebase/auth';
 import {
   addDoc,
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -19,29 +25,48 @@ import {
   setDoc,
   updateDoc,
   where,
+  writeBatch,
 } from 'firebase/firestore';
 import { auth, configured, db, DEFAULT_TEAM_ID, googleProvider } from './firebase';
+import { geocodeAddress, geocodeQuery, GEOCODE_VERSION, needsGeocode, shopHasCoords } from './geocode';
 
-const CITIES = [
+const ShopMap = React.lazy(() => import('./ShopMap'));
+
+const ORLANDO_CITIES = [
   'Orlando', 'Winter Park', 'Kissimmee', 'Sanford', 'Altamonte Springs',
   'Lake Mary', 'Apopka', 'Oviedo', 'Winter Garden', 'Windermere',
   'Ocoee', 'Clermont', 'St Cloud', 'Casselberry', 'Maitland',
   'Longwood', 'Winter Springs', 'Celebration', 'Dr. Phillips', 'Lake Buena Vista',
   'Davenport', 'Poinciana',
 ];
+const TAMPA_CITIES = [
+  'Tampa', 'Clearwater', 'St Petersburg', 'Largo', 'Dunedin', 'Pinellas Park',
+  'Oldsmar', 'Palm Harbor', 'Tarpon Springs', 'Safety Harbor', 'Seminole',
+  'Indian Rocks Beach', 'Belleair Bluffs', 'Clearwater Beach', 'St Pete Beach',
+  'New Port Richey', 'Port Richey', 'Holiday', 'Madeira Beach', 'Treasure Island',
+];
+const CITIES = [...ORLANDO_CITIES, ...TAMPA_CITIES];
+const TEAM_LABEL = { orlando: 'Orlando', tampa: 'Tampa' };
 const STATUS = {
   not_visited: '待拜访',
   visited: '已卖进/拜访',
   follow_up: '需跟进',
   no_interest: '无意向/暂缓',
 };
-const emptyShop = () => ({
-  name: '', address: '', city: 'Orlando', phone: '', tier: '', status: 'not_visited',
+function defaultCity(teamId) {
+  return teamId === 'tampa' ? 'Clearwater' : 'Orlando';
+}
+
+const emptyShop = (teamId) => ({
+  name: '', address: '', city: defaultCity(teamId), phone: '', tier: '', status: 'not_visited',
   is_chain: false, chain_name: '', chain_total_stores: '', staff_contact: '', owner_name: '',
   owner_schedule: '', contact_role: '', store_number: '', restock_status: '', distributor: '',
-  test_case_placed: false, traffic_note: '', brands_note: '', next_plan: '',
+  test_case_placed: false, sample_placed: false, test_case_placed_on: '', sample_placed_on: '',
+  test_case_today: false, sample_today: false,
+  traffic_note: '', traffic_notes: [], brands_note: '', next_plan: '',
   next_plan_date: '', next_plan_time: '', source_url: '', starred: false,
 });
+const MAX_TRAFFIC_NOTES = 2;
 
 function formatNextPlan(shop) {
   const date = (shop?.next_plan_date || '').trim();
@@ -75,19 +100,35 @@ const SORT_OPTIONS = [
   { value: 'tier', label: '分级' },
 ];
 
-function authMessage(err) {
+const MIN_PASSWORD_LENGTH = 8;
+
+function passwordIssues(password) {
+  const issues = [];
+  if (password.length < MIN_PASSWORD_LENGTH) issues.push(`至少 ${MIN_PASSWORD_LENGTH} 位`);
+  if (!/[A-Za-z]/.test(password)) issues.push('需包含字母');
+  if (!/[0-9]/.test(password)) issues.push('需包含数字');
+  return issues;
+}
+
+function authMessage(err, mode = 'login') {
   const code = err?.code || '';
   if (code.includes('invalid-credential') || code.includes('wrong-password') || code.includes('user-not-found')) {
-    return '邮箱或密码不正确';
+    return mode === 'account' ? '当前密码不正确' : '邮箱或密码不正确';
   }
+  if (code.includes('requires-recent-login')) return '请输入当前密码后再修改';
+  if (code.includes('email-already-in-use')) return '这个邮箱已经注册过，请直接登录';
+  if (code.includes('invalid-email')) return '邮箱格式不正确';
+  if (code.includes('weak-password')) return `密码太弱，请使用至少 ${MIN_PASSWORD_LENGTH} 位，并包含字母和数字`;
+  if (code.includes('operation-not-allowed')) return '邮箱密码登录尚未开启，请在 Firebase Authentication 里打开 Email/Password';
   if (code.includes('popup-closed')) return '已取消 Google 登录';
   if (code.includes('popup-blocked')) return '浏览器拦截了弹窗，请允许后重试';
   if (code.includes('too-many-requests')) return '尝试次数过多，请稍后再试';
-  return err?.message || '登录失败';
+  return err?.message || (mode === 'signup' ? '创建账号失败' : '登录失败');
 }
 
 function timeValue(value) {
-  if (!value) return 0;
+  if (value == null || value === '') return 0;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
   if (typeof value.toMillis === 'function') return value.toMillis();
   if (value instanceof Date) return value.getTime();
   if (typeof value === 'string') return Date.parse(value) || 0;
@@ -119,6 +160,134 @@ function shopUpdatedDateKey(shop) {
   return localDateKeyFromTimestamp(shop?.updated_at);
 }
 
+function shopCreatedDateKey(shop) {
+  return localDateKeyFromTimestamp(shop?.created_at);
+}
+
+function isNewVisitToday(shop, today = todayDateKey()) {
+  const created = shopCreatedDateKey(shop);
+  if (created) return created === today;
+  const notes = normalizeTrafficNotes(shop);
+  return !notes.some((n) => n.date && n.date !== today);
+}
+
+function legacyNoteDate(shop) {
+  return shopUpdatedDateKey(shop) || todayDateKey();
+}
+
+function formatNoteStamp(note) {
+  const dateLabel = String(note?.date || '').trim().replace(/-/g, '/');
+  const ms = timeValue(note?.at);
+  if (ms) {
+    const d = new Date(ms);
+    if (!note?.date || todayDateKey(d) === note.date) {
+      const hh = String(d.getHours()).padStart(2, '0');
+      const mm = String(d.getMinutes()).padStart(2, '0');
+      const fallback = `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
+      return `${dateLabel || fallback} ${hh}:${mm}`;
+    }
+  }
+  return dateLabel;
+}
+
+function normalizeTrafficNotes(shop) {
+  const raw = shop?.traffic_notes;
+  if (Array.isArray(raw) && raw.length) {
+    return raw
+      .map((n) => ({
+        date: n.date || localDateKeyFromTimestamp(n.at) || '',
+        text: String(n.text || '').trim(),
+        at: timeValue(n.at),
+      }))
+      .filter((n) => n.text)
+      .sort((a, b) => {
+        const byDate = String(b.date).localeCompare(String(a.date));
+        return byDate || (timeValue(b.at) - timeValue(a.at));
+      })
+      .filter((n, i, arr) => arr.findIndex((x) => x.text === n.text) === i)
+      .slice(0, MAX_TRAFFIC_NOTES);
+  }
+  const text = String(shop?.traffic_note || '').trim();
+  if (!text) return [];
+  return [{
+    date: legacyNoteDate(shop),
+    text,
+    at: timeValue(shop?.updated_at),
+  }];
+}
+
+function todayNoteText(notes, today = todayDateKey()) {
+  return notes.find((n) => n.date === today)?.text || '';
+}
+
+function historyNotes(notes, today = todayDateKey()) {
+  const todayText = notes.find((n) => n.date === today)?.text || '';
+  return notes
+    .filter((n) => n.date !== today && (!todayText || n.text !== todayText))
+    .slice(0, MAX_TRAFFIC_NOTES);
+}
+
+function mergeTrafficNotes(existingNotes, todayText) {
+  const today = todayDateKey();
+  const text = String(todayText || '').trim();
+  const withoutToday = existingNotes.filter((n) => n.date !== today && n.text !== text);
+  if (!text) return withoutToday.slice(0, MAX_TRAFFIC_NOTES);
+  const prevToday = existingNotes.find((n) => n.date === today);
+  const at = prevToday && prevToday.text === text ? (prevToday.at || Date.now()) : Date.now();
+  return [{ date: today, text, at }, ...withoutToday].slice(0, MAX_TRAFFIC_NOTES);
+}
+
+function serializeTrafficNotes(notes) {
+  return notes.slice(0, MAX_TRAFFIC_NOTES).map((n) => ({
+    date: n.date,
+    text: n.text,
+    at: timeValue(n.at) || Date.now(),
+  }));
+}
+
+function placementOn(shop, kind) {
+  return String(shop?.[`${kind}_placed_on`] || '').trim();
+}
+
+function isPlaced(shop, kind) {
+  return Boolean(placementOn(shop, kind) || shop?.[`${kind}_placed`]);
+}
+
+function formatMonthDay(dateKey) {
+  const m = String(dateKey || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return '';
+  return `${Number(m[2])}月${Number(m[3])}日`;
+}
+
+function nextPlacement(prevShop, todayYes, kind) {
+  const today = todayDateKey();
+  const prevOn = placementOn(prevShop, kind);
+  const prevPlaced = isPlaced(prevShop, kind);
+  if (todayYes) return { placed: true, on: today };
+  if (prevOn === today) return { placed: false, on: '' };
+  return { placed: prevPlaced, on: prevOn };
+}
+
+function placedToday(shop, kind, today = todayDateKey()) {
+  return placementOn(shop, kind) === today;
+}
+
+function placementHintDate(draft, kind) {
+  const today = todayDateKey();
+  const stored = placementOn(draft, kind);
+  const todayYes = Boolean(draft?.[`${kind}_today`]);
+  if (todayYes) return today;
+  if (stored && stored !== today) return stored;
+  return '';
+}
+
+function placementHint(draft, kind) {
+  const dateText = formatMonthDay(placementHintDate(draft, kind));
+  if (dateText) return `${dateText}已放`;
+  if (isPlaced(draft, kind) && !draft?.[`${kind}_today`]) return '已放';
+  return '';
+}
+
 function localDateKeyFromTimestamp(value) {
   if (!value) return '';
   if (typeof value.toDate === 'function') return todayDateKey(value.toDate());
@@ -134,14 +303,17 @@ function isTierAPlus(tier) {
 function buildDailyReportText(shopList) {
   const today = todayDateKey();
   const todayShops = shopList.filter((s) => shopUpdatedDateKey(s) === today);
-  const visitCount = todayShops.length;
-  const aPlusCount = todayShops.filter((s) => isTierAPlus(s.tier)).length;
-  const testCaseCount = todayShops.filter((s) => s.test_case_placed).length;
+  const newShops = todayShops.filter((s) => isNewVisitToday(s, today));
+  const revisitShops = todayShops.filter((s) => !isNewVisitToday(s, today));
+  const newAPlusCount = newShops.filter((s) => isTierAPlus(s.tier)).length;
+  const testCaseCount = todayShops.filter((s) => placedToday(s, 'test_case', today)).length;
+  const sampleCount = todayShops.filter((s) => placedToday(s, 'sample', today)).length;
   return [
     `日期：${today}`,
-    `访店数量：${visitCount}`,
-    `A级及以上门店数：${aPlusCount}`,
-    `样机投放数量：`,
+    `新店：${newShops.length}`,
+    `新店中 A 级及以上：${newAPlusCount}`,
+    `回访：${revisitShops.length}`,
+    `样机投放数量：${sampleCount || ''}`,
     `试抽盒投放数量：${testCaseCount || ''}`,
     `遇到的问题：`,
   ].join('\n');
@@ -188,7 +360,7 @@ function withTimeout(promise, ms, message) {
 function readErrorMessage(error) {
   const code = error?.code || '';
   if (code.includes('permission-denied')) {
-    return 'Firestore 拒绝读取。请确认已创建数据库，并把仓库里的 firestore.rules 发布到规则页。';
+    return 'Firestore 拒绝写入档案。请刷新后再试；若仍失败，确认已把仓库里的 firestore.rules 发布到规则页。';
   }
   if (code.includes('unavailable') || code.includes('not-found')) {
     return '连不上 Firestore。请在 Firebase 控制台创建 Firestore 数据库后再刷新。';
@@ -196,13 +368,51 @@ function readErrorMessage(error) {
   return error?.message || '加载失败';
 }
 
+function shopsCollection(userId) {
+  return collection(db, 'profiles', userId, 'shops');
+}
+
+function shopDoc(userId, shopId) {
+  return doc(db, 'profiles', userId, 'shops', shopId);
+}
+
+function shopFromSnap(item) {
+  const data = item.data();
+  const ownerId = item.ref.parent?.parent?.id || data.assigned_to;
+  return { id: item.id, ...data, assigned_to: data.assigned_to || ownerId };
+}
+
+let pendingSignupName = '';
+
+function authEmailOf(user) {
+  return user.email
+    || user.providerData?.find((p) => p.email)?.email
+    || '';
+}
+
 async function ensureProfile(user) {
   const ref = doc(db, 'profiles', user.uid);
-  const snap = await getDoc(ref);
-  if (snap.exists()) return { id: snap.id, ...snap.data() };
+  const email = authEmailOf(user);
+  const fullName = (pendingSignupName || user.displayName || email.split('@')[0] || '未命名').trim();
+  pendingSignupName = '';
+
+  let snap;
+  try {
+    snap = await getDoc(ref);
+  } catch {
+    snap = null;
+  }
+  if (snap?.exists()) return { id: snap.id, ...snap.data() };
+
+  try {
+    await user.getIdToken(true);
+  } catch {
+    // token refresh is best-effort; profile create no longer depends on token email
+  }
+
   const profile = {
-    full_name: user.displayName || (user.email || '').split('@')[0],
-    email: user.email || '',
+    full_name: fullName || '未命名',
+    email,
     role: 'sales',
     team_id: DEFAULT_TEAM_ID,
     active: true,
@@ -211,22 +421,57 @@ async function ensureProfile(user) {
   return { id: user.uid, ...profile };
 }
 
+async function migrateLegacyShops(currentUser, profile, members) {
+  let snap;
+  try {
+    const shopQuery = profile.role === 'manager'
+      ? query(collection(db, 'shops'), where('team_id', '==', profile.team_id))
+      : query(collection(db, 'shops'), where('assigned_to', '==', currentUser.uid));
+    snap = await getDocs(shopQuery);
+  } catch {
+    return;
+  }
+  if (snap.empty) return;
+
+  const memberIds = new Set(members.map((m) => m.id));
+  memberIds.add(currentUser.uid);
+
+  await Promise.all(snap.docs.map(async (item) => {
+    const data = item.data();
+    let ownerId = data.assigned_to;
+    if (!ownerId || !memberIds.has(ownerId)) ownerId = currentUser.uid;
+    if (profile.role !== 'manager') ownerId = currentUser.uid;
+
+    const destRef = shopDoc(ownerId, item.id);
+    try {
+      const destSnap = await getDoc(destRef);
+      const visitsSnap = await getDocs(collection(item.ref, 'visits'));
+      const batch = writeBatch(db);
+      if (!destSnap.exists()) {
+        batch.set(destRef, {
+          ...data,
+          assigned_to: ownerId,
+          team_id: data.team_id || profile.team_id,
+        });
+        visitsSnap.docs.forEach((visit) => {
+          batch.set(doc(destRef, 'visits', visit.id), visit.data());
+        });
+      }
+      visitsSnap.docs.forEach((visit) => batch.delete(visit.ref));
+      batch.delete(item.ref);
+      await batch.commit();
+    } catch (error) {
+      console.warn('migrate shop failed', item.id, error);
+    }
+  }));
+}
+
 async function fetchTeamData(currentUser) {
   const p = await withTimeout(
     ensureProfile(currentUser),
     20000,
     '读取账号超时。请刷新页面，或检查网络是否拦截了 Firestore。',
   );
-  const shopQuery = p.role === 'manager'
-    ? query(collection(db, 'shops'), where('team_id', '==', p.team_id))
-    : query(collection(db, 'shops'), where('assigned_to', '==', currentUser.uid));
-  const shopSnap = await withTimeout(
-    getDocs(shopQuery),
-    20000,
-    '读取门店超时。多半是浏览器连不上 Firestore，请硬刷新后再试；若仍失败，换 Chrome 打开同一网址。',
-  );
-  const shops = shopSnap.docs
-    .map((item) => ({ id: item.id, ...item.data() }));
   let members = [];
   if (p.role === 'manager') {
     const memberSnap = await getDocs(query(collection(db, 'profiles'), where('team_id', '==', p.team_id)));
@@ -234,6 +479,18 @@ async function fetchTeamData(currentUser) {
       .map((item) => ({ id: item.id, ...item.data() }))
       .sort((a, b) => (a.full_name || a.email || '').localeCompare(b.full_name || b.email || ''));
   }
+
+  await migrateLegacyShops(currentUser, p, members);
+
+  const ownerIds = p.role === 'manager'
+    ? [...new Set([currentUser.uid, ...members.map((m) => m.id)])]
+    : [currentUser.uid];
+  const shopSnaps = await withTimeout(
+    Promise.all(ownerIds.map((id) => getDocs(shopsCollection(id)))),
+    20000,
+    '读取门店超时。多半是浏览器连不上 Firestore，请硬刷新后再试；若仍失败，换 Chrome 打开同一网址。',
+  );
+  const shops = shopSnaps.flatMap((shopSnap) => shopSnap.docs.map(shopFromSnap));
   return { profile: p, shops, members };
 }
 
@@ -249,19 +506,52 @@ function GoogleMark() {
 }
 
 function Login() {
+  const [mode, setMode] = useState('login');
+  const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+  const signup = mode === 'signup';
+  const pwdIssues = signup ? passwordIssues(password) : [];
+
+  const switchMode = (next) => {
+    setMode(next);
+    setErr('');
+    setConfirm('');
+  };
 
   const submit = async (e) => {
     e.preventDefault();
     setErr('');
+    if (signup) {
+      const name = fullName.trim();
+      if (!name) {
+        setErr('请填写姓名');
+        return;
+      }
+      if (pwdIssues.length) {
+        setErr(`密码${pwdIssues.join('，')}`);
+        return;
+      }
+      if (password !== confirm) {
+        setErr('两次输入的密码不一致');
+        return;
+      }
+    }
     setBusy(true);
     try {
-      await signInWithEmailAndPassword(auth, email, password);
+      if (signup) {
+        pendingSignupName = fullName.trim();
+        const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
+        await updateProfile(cred.user, { displayName: fullName.trim() });
+      } else {
+        await signInWithEmailAndPassword(auth, email.trim(), password);
+      }
     } catch (error) {
-      setErr(authMessage(error));
+      pendingSignupName = '';
+      setErr(authMessage(error, mode));
     } finally {
       setBusy(false);
     }
@@ -279,7 +569,7 @@ function Login() {
           ? `这个 Google 账号（${existing}）已经用邮箱密码注册过，请改用邮箱登录。`
           : '这个 Google 账号已经用邮箱密码注册过，请改用邮箱登录。');
       } else {
-        setErr(authMessage(error));
+        setErr(authMessage(error, mode));
       }
     } finally {
       setBusy(false);
@@ -290,15 +580,70 @@ function Login() {
     <main className="login">
       <form className="panel" onSubmit={submit}>
         <h1>门店拜访清单</h1>
-        <p>Orlando · Firebase 云端版</p>
-        <button className="google" type="button" onClick={google} disabled={busy}>
-          <GoogleMark /> 使用 Google 账号登录
-        </button>
-        <div className="or">或使用邮箱密码</div>
-        <label>邮箱<input value={email} onChange={(e) => setEmail(e.target.value)} type="email" required /></label>
-        <label>密码<input value={password} onChange={(e) => setPassword(e.target.value)} type="password" required /></label>
+        <p>Orlando · {signup ? '创建账号' : 'Firebase 云端版'}</p>
+        {!signup && (
+          <>
+            <button className="google" type="button" onClick={google} disabled={busy}>
+              <GoogleMark /> 使用 Google 账号登录
+            </button>
+            <div className="or">或使用邮箱密码</div>
+          </>
+        )}
+        {signup && (
+          <label>
+            姓名
+            <input
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+              autoComplete="name"
+              required
+            />
+          </label>
+        )}
+        <label>
+          邮箱
+          <input
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            type="email"
+            autoComplete="email"
+            required
+          />
+        </label>
+        <label>
+          密码
+          <PasswordField
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete={signup ? 'new-password' : 'current-password'}
+            minLength={signup ? MIN_PASSWORD_LENGTH : undefined}
+            required
+          />
+        </label>
+        {signup && (
+          <>
+            <div className={password && pwdIssues.length ? 'hint bad' : 'hint'}>
+              至少 {MIN_PASSWORD_LENGTH} 位，需同时包含字母和数字
+            </div>
+            <label>
+              确认密码
+              <PasswordField
+                value={confirm}
+                onChange={(e) => setConfirm(e.target.value)}
+                autoComplete="new-password"
+                minLength={MIN_PASSWORD_LENGTH}
+                required
+              />
+            </label>
+          </>
+        )}
         {err && <div className="error">{err}</div>}
-        <button className="primary" disabled={busy}>{busy ? '登录中…' : '登录'}</button>
+        <button className="primary" disabled={busy}>
+          {busy ? (signup ? '创建中…' : '登录中…') : (signup ? '创建账号' : '登录')}
+        </button>
+        <button className="auth-switch" type="button" onClick={() => switchMode(signup ? 'login' : 'signup')}>
+          {signup ? '已有账号？去登录' : '没有账号？创建账号'}
+        </button>
       </form>
     </main>
   );
@@ -320,6 +665,10 @@ export default function App() {
   const [reportText, setReportText] = useState('');
   const [copied, setCopied] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [view, setView] = useState('list');
+  const [hoveredShopId, setHoveredShopId] = useState(null);
+  const [geocodeNote, setGeocodeNote] = useState('');
+  const [accountOpen, setAccountOpen] = useState(false);
 
   useEffect(() => {
     if (!configured || !auth) {
@@ -361,6 +710,65 @@ export default function App() {
     };
   }, []);
 
+  const shopsRef = useRef(shops);
+  shopsRef.current = shops;
+
+  useEffect(() => {
+    if (!user || !shops.length) {
+      setGeocodeNote('');
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      while (!cancelled) {
+        const pending = shopsRef.current.filter(needsGeocode);
+        if (!pending.length) {
+          if (!cancelled) setGeocodeNote('');
+          break;
+        }
+        setGeocodeNote(`正在按地址重新定位 ${pending.length} 家…`);
+        const shop = pending[0];
+        const queryText = geocodeQuery(shop);
+        let coords = null;
+        try {
+          coords = await geocodeAddress(queryText, shop);
+        } catch {
+          coords = null;
+        }
+        if (cancelled) return;
+        const patch = coords
+          ? {
+            lat: coords.lat,
+            lng: coords.lng,
+            geocode_query: queryText,
+            geocode_failed: false,
+            geocode_version: GEOCODE_VERSION,
+          }
+          : {
+            lat: null,
+            lng: null,
+            geocode_query: queryText,
+            geocode_failed: true,
+            geocode_version: GEOCODE_VERSION,
+          };
+        try {
+          if (shop.assigned_to) {
+            await updateDoc(shopDoc(shop.assigned_to, shop.id), patch);
+          }
+        } catch {
+          // still cache locally so this session does not retry forever
+        }
+        if (!cancelled) {
+          setShops((prev) => prev.map((s) => (s.id === shop.id ? { ...s, ...patch } : s)));
+        }
+        await new Promise((resolve) => setTimeout(resolve, 350));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user, shops.length]);
+
   async function loadAll(currentUser = user) {
     if (!currentUser) return;
     setLoading(true);
@@ -378,6 +786,8 @@ export default function App() {
   }
 
   async function openShop(shop) {
+    const notes = normalizeTrafficNotes(shop);
+    const today = todayDateKey();
     setSelected(shop.id);
     setDraft({
       ...shop,
@@ -385,6 +795,14 @@ export default function App() {
       next_plan_date: shop.next_plan_date || '',
       next_plan_time: shop.next_plan_time || '',
       starred: Boolean(shop.starred),
+      test_case_placed: isPlaced(shop, 'test_case'),
+      sample_placed: isPlaced(shop, 'sample'),
+      test_case_placed_on: placementOn(shop, 'test_case'),
+      sample_placed_on: placementOn(shop, 'sample'),
+      test_case_today: placedToday(shop, 'test_case', today),
+      sample_today: placedToday(shop, 'sample', today),
+      traffic_notes: notes,
+      traffic_note: todayNoteText(notes),
     });
     setReportText('');
     setCopied(false);
@@ -394,7 +812,7 @@ export default function App() {
     e?.stopPropagation?.();
     const next = !shop.starred;
     try {
-      await updateDoc(doc(db, 'shops', shop.id), {
+      await updateDoc(shopDoc(shop.assigned_to || profile.id, shop.id), {
         starred: next,
         updated_at: serverTimestamp(),
       });
@@ -407,7 +825,7 @@ export default function App() {
 
   function openNew() {
     setSelected('new');
-    setDraft(emptyShop());
+    setDraft(emptyShop(profile?.team_id));
     setReportText('');
     setCopied(false);
   }
@@ -415,6 +833,11 @@ export default function App() {
   async function saveShop() {
     if (!draft.name.trim() || saving) return;
     const nextPlanText = formatNextPlan(draft);
+    const prevShop = selected === 'new' ? draft : (shops.find((s) => s.id === selected) || draft);
+    const existingNotes = normalizeTrafficNotes(prevShop);
+    const nextNotes = serializeTrafficNotes(mergeTrafficNotes(existingNotes, draft.traffic_note));
+    const testNext = nextPlacement(prevShop, draft.test_case_today, 'test_case');
+    const sampleNext = nextPlacement(prevShop, draft.sample_today, 'sample');
     const payload = withoutUndefined({
       ...draft,
       name: draft.name.trim(),
@@ -422,28 +845,76 @@ export default function App() {
       next_plan_date: draft.next_plan_date || '',
       next_plan_time: draft.next_plan_date ? (draft.next_plan_time || '') : '',
       next_plan: nextPlanText,
+      traffic_notes: nextNotes,
+      traffic_note: nextNotes[0]?.text || '',
+      test_case_placed: testNext.placed,
+      test_case_placed_on: testNext.on,
+      sample_placed: sampleNext.placed,
+      sample_placed_on: sampleNext.on,
     });
     delete payload.id;
     delete payload.created_at;
     delete payload.updated_at;
+    delete payload.test_case_today;
+    delete payload.sample_today;
     setSaving(true);
     try {
+      const geoQuery = geocodeQuery(payload);
+      const prevGeoShop = selected === 'new' ? null : shops.find((s) => s.id === selected);
+      if (!geoQuery) {
+        payload.lat = null;
+        payload.lng = null;
+        payload.geocode_query = '';
+        payload.geocode_failed = false;
+        payload.geocode_version = GEOCODE_VERSION;
+      } else if (selected === 'new' || geoQuery !== geocodeQuery(prevGeoShop || {}) || prevGeoShop?.geocode_version !== GEOCODE_VERSION) {
+        const coords = await geocodeAddress(geoQuery, payload);
+        if (coords) {
+          payload.lat = coords.lat;
+          payload.lng = coords.lng;
+          payload.geocode_query = geoQuery;
+          payload.geocode_failed = false;
+          payload.geocode_version = GEOCODE_VERSION;
+        }
+      }
       if (selected === 'new') {
         payload.team_id = profile.team_id;
         payload.assigned_to = profile.role === 'manager' ? (draft.assigned_to || profile.id) : profile.id;
-        const ref = await addDoc(collection(db, 'shops'), {
+        const ref = await addDoc(shopsCollection(payload.assigned_to), {
           ...payload,
           created_at: serverTimestamp(),
           updated_at: serverTimestamp(),
         });
         setShops((prev) => [{ id: ref.id, ...payload, assigned_to: payload.assigned_to, team_id: payload.team_id, created_at: new Date(), updated_at: new Date() }, ...prev]);
       } else {
-        await updateDoc(doc(db, 'shops', selected), {
-          ...payload,
-          updated_at: serverTimestamp(),
-        });
+        const current = shops.find((s) => s.id === selected);
+        const oldOwner = current?.assigned_to || profile.id;
+        const newOwner = profile.role === 'manager' ? (payload.assigned_to || oldOwner) : oldOwner;
+        payload.assigned_to = newOwner;
+        if (newOwner !== oldOwner) {
+          const oldRef = shopDoc(oldOwner, selected);
+          const newRef = shopDoc(newOwner, selected);
+          const visitsSnap = await getDocs(collection(oldRef, 'visits'));
+          const batch = writeBatch(db);
+          batch.set(newRef, {
+            ...payload,
+            created_at: current?.created_at || serverTimestamp(),
+            updated_at: serverTimestamp(),
+          });
+          visitsSnap.docs.forEach((visit) => {
+            batch.set(doc(newRef, 'visits', visit.id), visit.data());
+            batch.delete(visit.ref);
+          });
+          batch.delete(oldRef);
+          await batch.commit();
+        } else {
+          await updateDoc(shopDoc(oldOwner, selected), {
+            ...payload,
+            updated_at: serverTimestamp(),
+          });
+        }
         setShops((prev) => {
-          const next = { ...draft, ...payload, id: selected, updated_at: new Date() };
+          const next = { ...draft, ...payload, id: selected, assigned_to: newOwner, updated_at: new Date() };
           return [next, ...prev.filter((s) => s.id !== selected)];
         });
       }
@@ -469,7 +940,8 @@ export default function App() {
       ['老板到店规律', draft.owner_schedule],
       ['主要拿货二级批发商', draft.distributor],
       ['进货情况', draft.restock_status],
-      ['是否放 Test Case', draft.test_case_placed ? '是' : '否'],
+      ['是否放 Test Case', draft.test_case_today ? '是' : '否'],
+      ['是否放 sample', draft.sample_today ? '是' : '否'],
       ['热卖品牌明细', draft.brands_note],
       ['备注', draft.traffic_note],
       ['下次拜访计划', formatNextPlan(draft)],
@@ -515,6 +987,10 @@ export default function App() {
     const matched = shops.filter((s) => !q || [s.name, s.address, s.city, s.owner_name, s.staff_contact].some((v) => (v || '').toLowerCase().includes(q)));
     return sortShops(matched, sortBy);
   }, [shops, search, sortBy]);
+  const draftNoteHistory = draft ? historyNotes(normalizeTrafficNotes(draft)) : [];
+  const mappedCount = filtered.filter(shopHasCoords).length;
+  const unmappedCount = filtered.filter((s) => geocodeQuery(s) && !shopHasCoords(s)).length;
+  const noAddressCount = filtered.filter((s) => !geocodeQuery(s)).length;
 
   if (!configured) {
     return (
@@ -546,15 +1022,17 @@ export default function App() {
   if (!user) return <Login />;
 
   return (
-    <main className="app">
+    <main className={view === 'map' ? 'app map-mode' : 'app'}>
       <header>
         <div>
           <h1>门店拜访清单</h1>
-          <span>Orlando</span>
+          <span>{TEAM_LABEL[profile?.team_id] || profile?.team_id || 'Orlando'}</span>
         </div>
         <div className="user">
           <Users size={15} />
-          {profile?.full_name || user.email}
+          <button type="button" className="name-btn" onClick={() => setAccountOpen(true)}>
+            {profile?.full_name || user.email}
+          </button>
           <b>{profile?.role === 'manager' ? 'Manager' : 'Sales'}</b>
           <button type="button" onClick={() => signOut(auth)}><LogOut size={15} />退出</button>
         </div>
@@ -565,67 +1043,125 @@ export default function App() {
           <Search size={15} />
           <input placeholder="搜索店名 / 地址 / 城市 / 联系人" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
+        <div className="view-toggle">
+          <button type="button" className={view === 'list' ? 'on' : ''} onClick={() => setView('list')}>
+            <List size={15} />列表
+          </button>
+          <button type="button" className={view === 'map' ? 'on' : ''} onClick={() => setView('map')}>
+            <Map size={15} />地图
+          </button>
+        </div>
         <button className="primary" type="button" onClick={openNew}><Plus size={15} />添加店铺</button>
         <select className="sort-select" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
           {SORT_OPTIONS.map((opt) => (
             <option key={opt.value} value={opt.value}>{opt.label}</option>
           ))}
         </select>
-        <button type="button" onClick={generateDailyReport}><Clipboard size={15} />生成今日汇报</button>
-      </section>
-      <section className="daily-report">
-        <textarea
-          value={dailyReportText}
-          onChange={(e) => setDailyReportText(e.target.value)}
-          placeholder={'点击「生成今日汇报」自动填充，可在此编辑\n\n日期：\n访店数量：\nA级及以上门店数：\n样机投放数量：\n试抽盒投放数量：\n遇到的问题：'}
-          rows={8}
-        />
-        {dailyReportText && (
-          <button type="button" onClick={copyDailyReport}>
-            <Copy size={14} />{dailyCopied ? '已复制' : '复制汇报'}
-          </button>
+        {view === 'list' && (
+          <button type="button" onClick={generateDailyReport}><Clipboard size={15} />生成今日汇报</button>
         )}
       </section>
+      {view === 'list' && (
+        <section className="daily-report">
+          <textarea
+            value={dailyReportText}
+            onChange={(e) => setDailyReportText(e.target.value)}
+            placeholder={'点击「生成今日汇报」自动填充，可在此编辑\n\n日期：\n新店：\n新店中 A 级及以上：\n回访：\n样机投放数量：\n试抽盒投放数量：\n遇到的问题：'}
+            rows={9}
+          />
+          {dailyReportText && (
+            <button type="button" onClick={copyDailyReport}>
+              <Copy size={14} />{dailyCopied ? '已复制' : '复制汇报'}
+            </button>
+          )}
+        </section>
+      )}
       {profile?.role === 'manager' && (
         <div className="manager-note">Manager 模式：当前可查看团队全部门店 · {members.length} 个账号</div>
       )}
-      <div className="count">共 {filtered.length} 家店铺</div>
-      <section>
-        {filtered.map((s) => (
-          <article className={s.starred ? 'card starred' : 'card'} key={s.id} onClick={() => openShop(s)}>
-            <div className="cardtop">
-              <div className="cardtitle">
-                <button
-                  type="button"
-                  className={s.starred ? 'star-btn active' : 'star-btn'}
-                  aria-label={s.starred ? '取消星标' : '加星标'}
-                  onClick={(e) => toggleStar(s, e)}
-                >
-                  <Star size={16} fill={s.starred ? 'currentColor' : 'none'} />
-                </button>
-                <div>
-                  <strong>{s.name}</strong>
-                  <small>{s.city}{s.address ? ` · ${s.address}` : ' · 地址待补充'}</small>
+      <div className={view === 'map' ? 'shop-split' : ''}>
+        <div className={view === 'map' ? 'shop-list-pane' : ''}>
+          <div className="count">
+            共 {filtered.length} 家店铺
+            {view === 'map' && ` · 地图上 ${mappedCount} 家`}
+            {view === 'map' && unmappedCount ? ` · ${unmappedCount} 家地址未定位` : ''}
+            {view === 'map' && noAddressCount ? ` · ${noAddressCount} 家没有地址` : ''}
+            {geocodeNote ? ` · ${geocodeNote}` : ''}
+          </div>
+          <section>
+            {filtered.map((s) => (
+              <article
+                className={[
+                  'card',
+                  s.starred ? 'starred' : '',
+                  hoveredShopId === s.id ? 'pin-active' : '',
+                ].filter(Boolean).join(' ')}
+                key={s.id}
+                onClick={() => openShop(s)}
+                onMouseEnter={() => setHoveredShopId(s.id)}
+                onMouseLeave={() => setHoveredShopId(null)}
+              >
+                <div className="cardtop">
+                  <div className="cardtitle">
+                    <button
+                      type="button"
+                      className={s.starred ? 'star-btn active' : 'star-btn'}
+                      aria-label={s.starred ? '取消星标' : '加星标'}
+                      onClick={(e) => toggleStar(s, e)}
+                    >
+                      <Star size={16} fill={s.starred ? 'currentColor' : 'none'} />
+                    </button>
+                    <div>
+                      <strong>{s.name}</strong>
+                      <small>{s.city}{s.address ? ` · ${s.address}` : ' · 地址待补充'}</small>
+                    </div>
+                  </div>
+                  <div>
+                    <span className="chip">{s.tier || '未分级'}</span>
+                    <span className="chip">{STATUS[s.status]}</span>
+                  </div>
                 </div>
-              </div>
-              <div>
-                <span className="chip">{s.tier || '未分级'}</span>
-                <span className="chip">{STATUS[s.status]}</span>
-              </div>
-            </div>
-            <div className="meta">
-              {s.starred && <span className="star-tag">重点关注</span>}
-              {s.owner_name && <span>老板 {s.owner_name}</span>}
-              {s.distributor && <span>批发商 {s.distributor}</span>}
-              {s.test_case_placed && <span>已放 Test Case</span>}
-            </div>
-            {s.traffic_note && <p className="remark">{s.traffic_note}</p>}
-            {s.brands_note && <p>{s.brands_note}</p>}
-            {formatNextPlan(s) && <p className="next">下次：{formatNextPlan(s)}</p>}
-            {!formatNextPlan(s) && s.next_plan && <p className="next">下次：{s.next_plan}</p>}
-          </article>
-        ))}
-      </section>
+                <div className="meta">
+                  {s.starred && <span className="star-tag">重点关注</span>}
+                  {s.owner_name && <span>老板 {s.owner_name}</span>}
+                  {s.distributor && <span>批发商 {s.distributor}</span>}
+                  {isPlaced(s, 'test_case') && (
+                    <span>已放 Test Case{formatMonthDay(placementOn(s, 'test_case')) ? ` · ${formatMonthDay(placementOn(s, 'test_case'))}` : ''}</span>
+                  )}
+                  {isPlaced(s, 'sample') && (
+                    <span>已放 sample{formatMonthDay(placementOn(s, 'sample')) ? ` · ${formatMonthDay(placementOn(s, 'sample'))}` : ''}</span>
+                  )}
+                  {view === 'map' && s.address && !shopHasCoords(s) && (
+                    <span>{s.geocode_failed ? '地址未能定位' : '定位中…'}</span>
+                  )}
+                </div>
+                {normalizeTrafficNotes(s).map((n, i) => (
+                  <p className="remark" key={`${n.date}-${i}`}>
+                    {formatNoteStamp(n) && <span className="remark-time">{formatNoteStamp(n)}</span>}
+                    {n.text}
+                  </p>
+                ))}
+                {s.brands_note && <p>{s.brands_note}</p>}
+                {formatNextPlan(s) && <p className="next">下次：{formatNextPlan(s)}</p>}
+                {!formatNextPlan(s) && s.next_plan && <p className="next">下次：{s.next_plan}</p>}
+              </article>
+            ))}
+          </section>
+        </div>
+        {view === 'map' && (
+          <div className="shop-map-pane">
+            <React.Suspense fallback={<div className="shop-map-fallback">地图加载中…</div>}>
+              <ShopMap
+                shops={filtered}
+                hoveredId={hoveredShopId}
+                statusLabels={STATUS}
+                onHover={setHoveredShopId}
+                onOpen={openShop}
+              />
+            </React.Suspense>
+          </div>
+        )}
+      </div>
       {draft && (
         <div className="modal" onMouseDown={() => { setDraft(null); setSelected(null); }}>
           <div className="editor" onMouseDown={(e) => e.stopPropagation()}>
@@ -637,6 +1173,9 @@ export default function App() {
               <Field label="店铺名称"><input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></Field>
               <Field label="城市">
                 <select value={draft.city} onChange={(e) => setDraft({ ...draft, city: e.target.value })}>
+                  {draft.city && !CITIES.includes(draft.city) && (
+                    <option value={draft.city}>{draft.city}</option>
+                  )}
                   {CITIES.map((c) => <option key={c}>{c}</option>)}
                 </select>
               </Field>
@@ -662,12 +1201,18 @@ export default function App() {
               <Field label="老板到店规律"><input value={draft.owner_schedule} onChange={(e) => setDraft({ ...draft, owner_schedule: e.target.value })} /></Field>
               <Field label="主要拿货二级批发商"><input value={draft.distributor} onChange={(e) => setDraft({ ...draft, distributor: e.target.value })} /></Field>
               <Field label="进货情况"><input value={draft.restock_status} onChange={(e) => setDraft({ ...draft, restock_status: e.target.value })} /></Field>
-              <Field label="是否放 Test Case">
-                <select value={draft.test_case_placed ? 'yes' : 'no'} onChange={(e) => setDraft({ ...draft, test_case_placed: e.target.value === 'yes' })}>
-                  <option value="no">否</option>
-                  <option value="yes">是</option>
-                </select>
-              </Field>
+              <PlacementField
+                label="是否放 Test Case"
+                kind="test_case"
+                draft={draft}
+                onChange={(todayYes) => setDraft({ ...draft, test_case_today: todayYes })}
+              />
+              <PlacementField
+                label="是否放 sample"
+                kind="sample"
+                draft={draft}
+                onChange={(todayYes) => setDraft({ ...draft, sample_today: todayYes })}
+              />
               {profile?.role === 'manager' && (
                 <Field label="负责人">
                   <select value={draft.assigned_to || profile.id} onChange={(e) => setDraft({ ...draft, assigned_to: e.target.value })}>
@@ -678,18 +1223,47 @@ export default function App() {
                 </Field>
               )}
               <Field wide label="热卖品牌明细"><textarea value={draft.brands_note} onChange={(e) => setDraft({ ...draft, brands_note: e.target.value })} /></Field>
-              <Field wide label="备注"><textarea value={draft.traffic_note} onChange={(e) => setDraft({ ...draft, traffic_note: e.target.value })} /></Field>
-              <Field label="下次拜访日期（可选）">
-                <input
-                  type="date"
-                  value={draft.next_plan_date || ''}
-                  onChange={(e) => setDraft({
-                    ...draft,
-                    next_plan_date: e.target.value,
-                    next_plan_time: e.target.value ? draft.next_plan_time : '',
-                  })}
+              <div className="field wide">
+                <span>备注</span>
+                {draftNoteHistory.length > 0 && (
+                  <div className="note-history">
+                    {draftNoteHistory.map((n, i) => (
+                      <div className="note-history-item" key={`${n.date}-${i}`}>
+                        <time dateTime={n.date}>{formatNoteStamp(n)}</time>
+                        <p>{n.text}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {draftNoteHistory.length > 0 && <div className="note-today-hint">今天</div>}
+                <textarea
+                  value={draft.traffic_note}
+                  placeholder={draftNoteHistory.length ? '填写今天的备注' : ''}
+                  onChange={(e) => setDraft({ ...draft, traffic_note: e.target.value })}
                 />
-              </Field>
+              </div>
+              <div className="field">
+                <span>下次拜访日期（可选）</span>
+                <div className="date-row">
+                  <input
+                    type="date"
+                    value={draft.next_plan_date || ''}
+                    onChange={(e) => setDraft({
+                      ...draft,
+                      next_plan_date: e.target.value,
+                      next_plan_time: e.target.value ? draft.next_plan_time : '',
+                    })}
+                  />
+                  <button
+                    type="button"
+                    className="clear-date"
+                    disabled={!draft.next_plan_date && !draft.next_plan_time}
+                    onClick={() => setDraft({ ...draft, next_plan_date: '', next_plan_time: '' })}
+                  >
+                    清空
+                  </button>
+                </div>
+              </div>
               <Field label="下次拜访时间（可选）">
                 <div className="time-row">
                   <select
@@ -746,10 +1320,177 @@ export default function App() {
           </div>
         </div>
       )}
+      {accountOpen && (
+        <AccountEditor
+          user={user}
+          profile={profile}
+          onClose={() => setAccountOpen(false)}
+          onSaved={(patch) => setProfile((prev) => ({ ...prev, ...patch }))}
+        />
+      )}
     </main>
+  );
+}
+
+function AccountEditor({ user, profile, onClose, onSaved }) {
+  const hasPassword = Boolean(user?.providerData?.some((p) => p.providerId === 'password'));
+  const [name, setName] = useState(profile?.full_name || user?.displayName || '');
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [err, setErr] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  async function save() {
+    const nextName = name.trim();
+    if (!nextName) {
+      setErr('请填写姓名');
+      return;
+    }
+    const changingPassword = Boolean(currentPassword || newPassword || confirm);
+    if (changingPassword) {
+      if (!hasPassword) {
+        setErr('此账号通过 Google 登录，密码请在 Google 账号中修改');
+        return;
+      }
+      if (!currentPassword) {
+        setErr('请输入当前密码');
+        return;
+      }
+      if (!newPassword) {
+        setErr('请填写新密码');
+        return;
+      }
+      const issues = passwordIssues(newPassword);
+      if (issues.length) {
+        setErr(`新密码${issues.join('，')}`);
+        return;
+      }
+      if (newPassword !== confirm) {
+        setErr('两次输入的新密码不一致');
+        return;
+      }
+      if (newPassword === currentPassword) {
+        setErr('新密码不能与当前密码相同');
+        return;
+      }
+    }
+    setErr('');
+    setSaving(true);
+    try {
+      if (nextName !== (profile?.full_name || '')) {
+        await updateProfile(user, { displayName: nextName });
+        await updateDoc(doc(db, 'profiles', user.uid), { full_name: nextName });
+        onSaved({ full_name: nextName });
+      }
+      if (changingPassword) {
+        const cred = EmailAuthProvider.credential(user.email, currentPassword);
+        await reauthenticateWithCredential(user, cred);
+        await updatePassword(user, newPassword);
+      }
+      onClose();
+    } catch (error) {
+      setErr(authMessage(error, 'account'));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="modal" onMouseDown={onClose}>
+      <div className="editor account-editor" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="editorhead">
+          <h2>编辑账号</h2>
+          <button type="button" onClick={onClose}><X size={18} /></button>
+        </div>
+        <div className="grid">
+          <Field wide label="姓名">
+            <input value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" />
+          </Field>
+          {hasPassword ? (
+            <>
+              <Field wide label="当前密码">
+                <PasswordField
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  autoComplete="current-password"
+                />
+              </Field>
+              <Field wide label="新密码">
+                <PasswordField
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  autoComplete="new-password"
+                  minLength={MIN_PASSWORD_LENGTH}
+                />
+              </Field>
+              <Field wide label="确认新密码">
+                <PasswordField
+                  value={confirm}
+                  onChange={(e) => setConfirm(e.target.value)}
+                  autoComplete="new-password"
+                  minLength={MIN_PASSWORD_LENGTH}
+                />
+              </Field>
+              <p className={newPassword && passwordIssues(newPassword).length ? 'hint bad' : 'hint'}>
+                不改密码请留空。新密码至少 {MIN_PASSWORD_LENGTH} 位，需包含字母和数字
+              </p>
+            </>
+          ) : (
+            <p className="hint">此账号通过 Google 登录，密码请在 Google 账号中修改。</p>
+          )}
+        </div>
+        {err && <div className="error">{err}</div>}
+        <footer>
+          <button className="primary" type="button" onClick={save} disabled={saving}>
+            <Save size={15} />{saving ? '保存中…' : '保存'}
+          </button>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
+function PasswordField({ value, onChange, autoComplete, minLength, required }) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <div className="password-wrap">
+      <input
+        type={visible ? 'text' : 'password'}
+        value={value}
+        onChange={onChange}
+        autoComplete={autoComplete}
+        minLength={minLength}
+        required={required}
+      />
+      <button
+        type="button"
+        className="password-toggle"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => setVisible((v) => !v)}
+        title={visible ? '隐藏密码' : '显示密码'}
+        aria-label={visible ? '隐藏密码' : '显示密码'}
+      >
+        {visible ? <EyeOff size={16} /> : <Eye size={16} />}
+      </button>
+    </div>
   );
 }
 
 function Field({ label, children, wide }) {
   return <label className={wide ? 'field wide' : 'field'}><span>{label}</span>{children}</label>;
+}
+
+function PlacementField({ label, kind, draft, onChange }) {
+  const hint = placementHint(draft, kind);
+  return (
+    <div className="field">
+      <span>{label}</span>
+      {hint && <div className="placed-hint">{hint}</div>}
+      <select value={draft[`${kind}_today`] ? 'yes' : 'no'} onChange={(e) => onChange(e.target.value === 'yes')}>
+        <option value="no">否</option>
+        <option value="yes">是（今天放）</option>
+      </select>
+    </div>
+  );
 }

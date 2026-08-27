@@ -18,18 +18,21 @@ Orlando 门店拜访清单。前端是 Vite + React，登录和数据在 **Fireb
    - `VITE_FIREBASE_STORAGE_BUCKET`
    - `VITE_FIREBASE_MESSAGING_SENDER_ID`
    - `VITE_FIREBASE_APP_ID`
-3. Authentication → Sign-in method 打开 **Google**，以及可选的 **Email/Password**
+3. Authentication → Sign-in method 打开 **Email/Password**（用于创建账号）和 **Google**
 4. 创建 Firestore 数据库（生产模式即可）
 5. Firestore → 规则，粘贴本仓库 `firestore.rules` 后发布  
    或在已登录 Firebase CLI 后执行 `npx firebase deploy --only firestore:rules`
 
 首次用 Google 登录会自动创建 `sales` 档案。若要变成经理，到 Firestore 的 `profiles/{你的uid}`，把 `role` 改成 `manager`。
 
+门店挂在用户下面：控制台打开 `profiles` → 点某个用户文档 → 子集合 `shops`。顶层如果还看得到 `shops`，是还没被对应账号打开过 App 的旧数据，登录后会自动搬走。
+
 ## V1 已实现
-- Google 登录（可选邮箱/密码）
+- 邮箱密码创建账号 / 登录（密码至少 8 位，需含字母和数字），或 Google 登录
 - Sales / Manager 角色（权限由 Firestore 规则保证）
-- 云端门店读取、新建、修改
-- Manager 可查看团队门店和分配负责人
+- 云端门店读取、新建、修改（门店存在对应用户档案下：`profiles/{uid}/shops`）
+- Manager 可查看团队门店和分配负责人（改负责人会把门店挪到该用户下面）
+- 首次打开会把旧的顶层 `shops` 自动迁到对应用户下
 - 门店下 visits 子集合写入拜访记录
 - 门店详情默认最近 3 次，可展开最近 10 次
 - Excel 导出入口预留

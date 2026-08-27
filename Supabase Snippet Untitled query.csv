@@ -1,0 +1,78 @@
+shop_id,shop_name,address,city,state,visit_date,units,feedback,decision_maker,restock_status,test_case_placed,next_plan
+0fef18db-07de-469f-96b0-9bf2aab7f046,1st smoke shop,2194 Main St Suite B,Dunedin,FL,2026-08-25,0,,,,false,
+35a83d91-9ea1-4e81-a663-68610c0c5831,2Cloudy Vape,14100 US Hwy 19 N #112,Clearwater,FL,null,null,null,null,null,null,null
+062af74d-00ea-4825-97e6-aa34fb6d4066,49th Smoke Shop - Palm Cloud,3612 49th Street N,St Petersburg,FL,null,null,null,null,null,null,null
+b274af20-0a3b-462e-a071-783e629f43b3,66 Smoke Shop,10201 66th St N,Pinellas Park,FL,null,null,null,null,null,null,null
+273b7116-01aa-4ca4-8597-646001752962,727 Smoke & Vape,2560 Sunset Point Rd,Clearwater,FL,null,null,null,null,null,null,null
+be3d3131-af7a-46a2-becc-a653fbf86853,Area 21 Smoke Shop Clearwater,2054 Gulf To Bay Blvd #3,Clearwater,FL,2026-08-25,0,有两家店；店里促销比较多，raz 2/3；sales manager在店，试了7 strawberry表示非常不错；介绍了价格都比较满意；另一家店销量更好，一天五六十只；留下test station,sales manager,,true,他表示会带过去，也会给合作伙伴发短信介绍我们的产品和商品表
+b13ce146-c700-41a9-b6ad-a9fa316fa1d5,Asylum Smoke & Stuff,7149 Ulmerton Rd,Largo,FL,null,null,null,null,null,null,null
+f30fbd93-1f06-478e-a6a8-59c5e16e179f,Atomic Smoke Shop,2093 N Highland Ave,Clearwater,FL,2026-08-25,0,碰到4家连锁店其中一个owner Muhammad；他说目前不是很想在店里放新品；如果后面有客户问这个新品，他会去7 star考虑进货,Muhammad,,false,
+f30fbd93-1f06-478e-a6a8-59c5e16e179f,Atomic Smoke Shop,2093 N Highland Ave,Clearwater,FL,2026-08-25,0,4家连锁；这家一天能卖30+支；留下test station；店员说不知道老板什么时候会来,,,true,
+63cab47f-983c-4a83-87eb-5f0c0082cd16,BEST SMOKE 2,1102 Overcash Dr,Clearwater,FL,null,null,null,null,null,null,null
+74a44f45-69a5-46ab-8ac6-96e336d5246e,Blazin smoke,6185 Central Ave,St Petersburg,FL,null,null,null,null,null,null,null
+ac1fc35e-6b22-4378-8ead-b31d45263805,Brothers Vape and Smoke Shop,3501 30th Ave N,St Petersburg,FL,null,null,null,null,null,null,null
+9a0160cd-a771-417c-b792-fa6e8cf29c0f,Budbuddy smoke shop,1116 34th St N,Clearwater,FL,null,null,null,null,null,null,null
+def631e8-c66d-4f67-b61e-f871472ecac0,Cloud 9 Galleries Smokeshop,1661 W Bay Dr,Largo,FL,null,null,null,null,null,null,null
+a01bf1b4-8e66-4949-91e2-76bdf211bf1c,Cozy Smoke Shop 1 / Vape & Kratom Bar,178 W Bay Dr,Largo,FL,null,null,null,null,null,null,null
+4c64f969-9872-43a0-bb7e-58abec52a33d,DISCOUNT SMOKE SHOP CLEARWATER,1919 Drew St Ste B,Clearwater,FL,2026-08-25,0,日销30+支；留下test station；店主试抽了一下，觉得不错，交换联系方式,mickal,,true,如果他到了，会考虑去7 star进货
+18834850-7f2d-4866-9928-6d26ebb5e657,DJ smoke shop,3803 34th St S,Clearwater,FL,null,null,null,null,null,null,null
+baba3ca5-3e03-4c36-9558-b5c5a93d4f43,DJ smoke shop 3,1300 S Missouri Ave,Clearwater,FL,2026-08-25,0,三家连锁店；这家工作日10-20一天，周末更好点；店员试抽watermelon，对口味和价格都比较满意；店员喜欢Miami mint,Ena,,false,
+740824f9-3b6e-41a7-aca5-7c52d972fdd2,Downtown Vaporium,901 Cleveland St Ste A,Clearwater,FL,2026-08-25,0,一天20-30支；sales manager尝了三种口味都很喜欢，也很喜欢价格；留下test station和联系方式,sales manager,7 star有账户,true,sales manager说会打电话和老板聊一下
+246630e2-521b-4536-a305-cc7f51ae8d9e,Exclusive Smokes & Same Day Delivery,7250 Ulmerton Rd,Largo,FL,null,null,null,null,null,null,null
+c3dea8d7-57fc-4394-ad62-318b3f008669,Exotic Smoke Shop Hookah Lounge and Kava Bar,1627 Gulf To Bay Blvd,Clearwater,FL,2026-08-25,0,6家连锁；店员说老板135下午四点后可能会在，等今天一会再来看看,,,false,等今天一会再来看看
+c3dea8d7-57fc-4394-ad62-318b3f008669,Exotic Smoke Shop Hookah Lounge and Kava Bar,1627 Gulf To Bay Blvd,Clearwater,FL,2026-08-25,0,回来了一次没见到店长；连锁大概5/6家店，会统一拿货；和店员介绍之后留下test station；这家店一天能卖40多只，但要等sales manager才能决定买不买,sales manager,,true,
+5b77c343-7dd4-4c8a-abd7-b60b03effca8,Gone With the Wind Smoke Shop,6101 Park Blvd Ste D,Pinellas Park,FL,null,null,null,null,null,null,null
+02af8db7-bdca-451b-b0e7-ab6bec7ce5dd,Good Vibes Smoke Shop 2,3800 Tampa Rd #150,Clearwater,FL,null,null,null,null,null,null,null
+40d20c88-e51e-42dd-a9a1-b0f53179399b,"Green Leaf Smoke Shop, Kava & Kratom Bar",2820 16th St N,St Petersburg,FL,null,null,null,null,null,null,null
+3817a763-78ef-42b3-97bb-e570676ccbe7,HI 5 tobacco and vapor. Smoke Shop,6886 Gulfport Blvd S,Clearwater,FL,null,null,null,null,null,null,null
+c87aab7e-953f-479e-a3f2-7fefd42b8276,Higher Up Smoke Shop,3730 Tampa Rd #5,Oldsmar,FL,null,null,null,null,null,null,null
+f320e75b-2621-4894-a379-c56127c35131,Highland Smoke Shop & Convenience (Maria’s),1333 N Highland Ave,Clearwater,FL,null,null,null,null,null,null,null
+a2cc369a-6e04-42c1-b670-ddc15e20beec,Hookah Sensation Smoke Shop,807 Court St Ste b,Clearwater,FL,2026-08-25,0,7家连锁店；店员说统一采购；店里有vozol 5000的产品但在货架最底下,,,false,
+cffc2c44-2580-4b5f-84a7-1120e158da0c,Ignite smoke shop,7320 Central Ave,Clearwater,FL,null,null,null,null,null,null,null
+ed78c043-f3d9-478e-a397-164a524bffc9,IndianRocks SmokeShop,1495 Indian Rocks Rd #2,Indian Rocks Beach,FL,null,null,null,null,null,null,null
+9af49d9c-b8d7-4dd6-9bee-975db44750c3,Insane Smoke Shop,1841 N Highland Ave #1,Clearwater,FL,2026-08-25,0,连锁店；店长可能三点半来店里；给了店员一个样机，留了电话,,,false,一会再来看看
+affeaf69-72ef-4184-a1d2-fba93aa8a952,J&B Smoke Shop,127 Forest Lakes Blvd,Oldsmar,FL,null,null,null,null,null,null,null
+a2a81b87-a79b-4cc2-a0b7-fe324aa4d66b,Jungle Smoke Shop,6160 Ulmerton Rd #3,Dunedin,FL,null,null,null,null,null,null,null
+dffb02b2-7f28-4fe4-9234-934f309451d4,K O Smoke Shop,24115 US Hwy 19 N,Clearwater,FL,null,null,null,null,null,null,null
+1771851a-c143-487d-9797-82387a391cb8,Kwik Stop,7330 Central Ave,St Petersburg,FL,null,null,null,null,null,null,null
+b0e52dbe-54b8-4b6d-a151-d7073c9c8f9f,Local Store Smoke Shop and Convenience Store,5825 66th St N,St Petersburg,FL,2026-08-20,0,日销60+，放了test station,,,false,
+2b296742-38b2-4206-b2c8-4fc66dc9bd87,Lux Smoke 5,5725 Central Ave,St Petersburg,FL,null,null,null,null,null,null,null
+3074256c-2946-4e06-80da-cf96212b3ceb,Macs Smoke Shop,1220 Clearwater Largo Rd,Largo,FL,2026-08-20,0,店员Dang，热卖raz/ras mary，约10支/天,,,false,
+456c937d-5e13-4cf5-aa58-37ee2530ad95,Marleys House Smoke Shop,2794 Gulf To Bay Blvd #1,Clearwater,FL,null,null,null,null,null,null,null
+def5af1f-90e6-429f-90a0-f80b13aa2ec8,Master Novelty Smoke Shop,8248 Ulmerton Rd,Largo,FL,null,null,null,null,null,null,null
+0feb3dde-a0f5-49eb-be85-7c01673188f2,Mirage Emporium Smoke Shop,760 Indian Rocks Rd N,Belleair Bluffs,FL,null,null,null,null,null,null,null
+2d8ce5eb-1ea4-4112-9c13-f2a573d7cc79,Mirage Emporium Smoke Shop #2,1705 Clearwater Largo Rd,Largo,FL,null,null,null,null,null,null,null
+c597ba14-b89f-4a5c-a525-8ff10c093151,Mis Electronics Smoke Shop,,St Petersburg,FL,2026-08-20,0,West Lealman片区，老板MJ愿意试放样品,,,false,
+d07b3cd9-3978-4933-99dd-b8a1fb0ffbe6,Mpire Express Smoke Shop,3001 34th St N suit c,Clearwater,FL,null,null,null,null,null,null,null
+fd12c07d-91a6-497e-bd5e-ba847f84acb9,"Mystic Smoke Shop - Kratom bar, Smoke, Vape, and Tobaccoo",2641 FL-590,Clearwater,FL,null,null,null,null,null,null,null
+c5e0ea1c-65de-480a-b153-31f8c90a6fed,N7 Nitro Kava Bar & Smoke Shop,2913 28th St N,St Petersburg,FL,null,null,null,null,null,null,null
+be9f8ed0-5676-41fe-aaaf-0575f3477cec,Nu Stellar Smoke Shop,146 49th St S,Clearwater,FL,null,null,null,null,null,null,null
+548a3d02-17da-44a8-b410-089ef9245f9a,NU Vape & Glass Inc,1703 S Missouri Ave,Clearwater,FL,2026-08-25,0,Chad周日周一在；上周四来过一次；这次是第二次拜访，见到店里的负责人Chad；介绍了品牌和口味；有人不是很清醒；放了test station，让店员试了一下；跟Chad介绍了我们的情况，告诉他我们在7 star有货，留下了联系方式,Chad,7 star有货,true,
+548a3d02-17da-44a8-b410-089ef9245f9a,NU Vape & Glass Inc,1703 S Missouri Ave,Clearwater,FL,2026-08-20,0,Chad周一20-25支/天；Serra周二40支/天,,,false,
+4fb6ed9a-ff15-41f6-96d7-0ba8e2cb9bd7,OMG Smoke Shop & Cigar,1598 Achieva Way,Dunedin,FL,2026-08-25,0,店里有买一送一活动；老板自己在孔雀wholesale那边上班，自己开了这家店；老板大概周日的下午可能会在店里；给店员试了两个味道都不错，留下一个station；每天能卖个30来只,,,true,
+70e78d83-3874-45cc-b889-723682d3c2ce,Pinellas Food & Smoke Shop,8191 66th St N,Pinellas Park,FL,2026-08-20,0,二次拜访，放test station,,,false,
+70e78d83-3874-45cc-b889-723682d3c2ce,Pinellas Food & Smoke Shop,8191 66th St N,Pinellas Park,FL,2026-08-20,0,有意向换新品,,,false,
+7d3f1758-d1d5-4093-95f3-6b742f84306c,Sam Smoke Shop,741 Clearwater Largo Rd,Largo,FL,null,null,null,null,null,null,null
+3825cd19-fc60-42af-9194-caf702131d77,Save Well Mart And Smoke Shop,6595 66th St N,Pinellas Park,FL,null,null,null,null,null,null,null
+901e439b-d411-4f4a-a51a-6150089c36be,Skyline Smoke Shop & Dispensary,9753 66th St N,Pinellas Park,FL,null,null,null,null,null,null,null
+15a03d69-1048-4c87-bdf9-813791959d9d,Smoke and vape shop,737 49th Street N,St Petersburg,FL,null,null,null,null,null,null,null
+c66a7fbb-30ee-4d8d-a0e2-1b556cdc751e,Smoke And Vape Shop,2034 16th St N,St Petersburg,FL,null,null,null,null,null,null,null
+ee8a0e59-def5-48eb-a901-8429a053fa99,Smoke brothers,2005 Gulf To Bay Blvd,Clearwater,FL,2026-08-25,0,介绍了价格比较满意；一天卖大概20只；留下一个sample；店主说会打电话和自己的哥哥讲一下这个事儿,,,false,
+464d4ae0-1021-45d4-aa12-eb16acf51a41,Smoke Rite Smoke Shop,11100 66th St N Unit 31,Largo,FL,2026-08-20,0,希望寄售，店很小,,,false,
+fa334f07-4cd9-4055-90f7-dc507e9ae387,smoke shop zone,1498 Gulf To Bay Blvd,Dunedin,FL,2026-08-25,0,大连锁；留下test station，但当班店员不是很清楚店里情况也不抽烟；收银台边上垃圾桶里卖了挺多的,,,true,
+37a104a5-1a83-48c5-a5e4-3e7ab4805e6d,Smoke Space,1285 San Christopher Dr,Dunedin,FL,null,null,null,null,null,null,null
+3ab0d93d-22b0-4168-96db-77424fd69324,SPARK 8 Smoke Shop & Lounge,1500 Gulf To Bay Blvd,Clearwater,FL,2026-08-25,0,经理在忙装修；一天卖好几十支，甚至上百；留下test station给店员试抽三个味道；介绍价格都比较满意；老板随机出现,,,true,两周后7 star会有货
+3179657b-4fcf-4c36-9bb0-9497aad5e130,Straight Pipes & Vapes,30139 US Hwy 19 N,Clearwater,FL,null,null,null,null,null,null,null
+e662ec50-c4e2-49d4-a771-edded7981016,Strange Cloudz Vape And Smoke Shop,13355 S Belcher Rd A,Largo,FL,null,null,null,null,null,null,null
+9b23999e-a6da-4179-bfd5-2779b8dd2d8d,Sun Flare Smoke and Kava Bar,910 W Bay Dr,Largo,FL,2026-08-20,0,二次拜访，放test station，从7 Star拿货,,,false,
+9b23999e-a6da-4179-bfd5-2779b8dd2d8d,Sun Flare Smoke and Kava Bar,910 W Bay Dr,Largo,FL,2026-08-20,0,明天sales manager在店里，放试用品,,,false,
+537e8858-cc5a-4b0d-b3f1-56db8927da5a,Super Shop Smoke Shop,1001 Broadway,Dunedin,FL,null,null,null,null,null,null,null
+79d21518-01b2-4b77-9ecb-18417c64d5ec,The Forge Smoke Shop,908 McMullen Booth Rd,Clearwater,FL,null,null,null,null,null,null,null
+b2e659da-d017-4081-9798-1c9fc1e26ea3,tobacco king,5451 31st St S,Clearwater,FL,null,null,null,null,null,null,null
+c8913667-c101-47cd-bd2b-fcf0cdabfe9c,Trippsi Trip Smoke shop,3701 FL-580 Ste E,Clearwater,FL,null,null,null,null,null,null,null
+91e671dc-8807-4d07-a0bf-2356801ea224,Vapers Club,1379 Main St,Clearwater,FL,null,null,null,null,null,null,null
+e7d1110b-f427-41a3-8336-d0ca6521a2dd,Vapor Road Disston Kava Bar & Smoke Shop,3708 49th Street N,St Petersburg,FL,null,null,null,null,null,null,null
+e24a62d5-6241-4bd5-9fb3-615bb02053d8,VIP SMOKES,1417 N Betty Ln,Clearwater,FL,2026-08-25,0,店里电子烟摆放面积比较小；一天卖几个几只；给店员留了一个sample,,,false,
+4ea2f5b8-506a-43db-9d52-4baa9031ccd6,Wild Side Smoke Shop,4845 34th St S,St Petersburg,FL,null,null,null,null,null,null,null
+520da536-f545-4760-a15c-0eff937c174e,Yayas Smoke Shop,2109 Main St e2,Dunedin,FL,null,null,null,null,null,null,null
+91733925-0ac2-4c38-9a21-a507e81be1ff,Zaza Smoke Shop,2148 49th St S,St Petersburg,FL,null,null,null,null,null,null,null

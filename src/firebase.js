@@ -36,6 +36,8 @@ function createDb() {
 export const auth = app ? getAuth(app) : null;
 export const db = createDb();
 export const googleProvider = new GoogleAuthProvider();
+googleProvider.addScope('email');
+googleProvider.addScope('profile');
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 
 export const DEFAULT_TEAM_ID = 'orlando';

@@ -21,7 +21,19 @@ service cloud.firestore {
       return hasProfile() && me().role == 'manager';
     }
 
-    function canAccessShop(shopId) {
+    function isTeammate(userId) {
+      return exists(/databases/$(database)/documents/profiles/$(userId))
+        && get(/databases/$(database)/documents/profiles/$(userId)).data.team_id == me().team_id;
+    }
+
+    function canAccessOwnedShop(userId) {
+      return hasProfile() && (
+        request.auth.uid == userId ||
+        (isManager() && isTeammate(userId))
+      );
+    }
+
+    function canAccessLegacyShop(shopId) {
       let shop = get(/databases/$(database)/documents/shops/$(shopId)).data;
       return hasProfile() && (
         shop.assigned_to == request.auth.uid ||
@@ -40,39 +52,52 @@ service cloud.firestore {
         && request.resource.data.role == 'sales'
         && request.resource.data.team_id is string
         && request.resource.data.active == true
-        && request.resource.data.email == request.auth.token.email;
+        && request.resource.data.full_name is string
+        && request.resource.data.email is string;
 
       allow update: if signedIn()
         && request.auth.uid == userId
         && request.resource.data.role == resource.data.role
         && request.resource.data.team_id == resource.data.team_id
         && request.resource.data.active == resource.data.active;
+
+      match /shops/{shopId} {
+        allow read: if canAccessOwnedShop(userId);
+
+        allow create: if hasProfile()
+          && request.resource.data.team_id == me().team_id
+          && request.resource.data.assigned_to == userId
+          && (
+            request.auth.uid == userId ||
+            (isManager() && isTeammate(userId))
+          );
+
+        allow update: if canAccessOwnedShop(userId)
+          && request.resource.data.team_id == resource.data.team_id
+          && request.resource.data.assigned_to == userId;
+
+        allow delete: if isManager() && resource.data.team_id == me().team_id;
+
+        match /visits/{visitId} {
+          allow read, create, update, delete: if canAccessOwnedShop(userId);
+        }
+      }
     }
 
+    // Legacy top-level shops: read + delete only so the app can move them under profiles.
     match /shops/{shopId} {
       allow read: if hasProfile() && (
         resource.data.assigned_to == request.auth.uid ||
         (isManager() && resource.data.team_id == me().team_id)
       );
 
-      allow create: if hasProfile()
-        && request.resource.data.team_id == me().team_id
-        && (
-          me().role == 'manager' ||
-          request.resource.data.assigned_to == request.auth.uid
-        );
-
-      allow update: if hasProfile()
-        && (
-          resource.data.assigned_to == request.auth.uid ||
-          (isManager() && resource.data.team_id == me().team_id)
-        )
-        && request.resource.data.team_id == resource.data.team_id;
-
-      allow delete: if isManager() && resource.data.team_id == me().team_id;
+      allow delete: if hasProfile() && (
+        resource.data.assigned_to == request.auth.uid ||
+        (isManager() && resource.data.team_id == me().team_id)
+      );
 
       match /visits/{visitId} {
-        allow read, create, update, delete: if canAccessShop(shopId);
+        allow read, delete: if canAccessLegacyShop(shopId);
       }
     }
   }
