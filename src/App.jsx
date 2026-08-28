@@ -374,7 +374,7 @@ function matchesCooperationFilter(status, filter) {
 function computeAreaMetrics(shopList, start, end) {
   const total = shopList.length;
   const visitedCount = shopList.filter((s) => shopVisitedInRange(s, start, end)).length;
-  const mappedCount = shopList.filter(shopHasCoords).length;
+  const mappedCount = visitedCount;
   const aPlusCount = shopList.filter((s) => isTierAPlus(s.tier)).length;
   const soldInCount = shopList.filter((s) => s.status === 'visited').length;
   const sampleCount = shopList.filter((s) => placementInRange(s, 'sample', start, end)).length;
