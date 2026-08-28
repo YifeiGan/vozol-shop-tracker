@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Search, Plus, X, ExternalLink, LogOut, Save, Users, Clipboard, Copy, Star, Map, List, Eye, EyeOff,
+  Search, Plus, X, ExternalLink, LogOut, Save, Users, Clipboard, Copy, Star, Map, List, Eye, EyeOff, LayoutDashboard,
 } from 'lucide-react';
 import {
   createUserWithEmailAndPassword,
@@ -99,6 +99,15 @@ const SORT_OPTIONS = [
   { value: 'next_follow_up', label: '下次跟进时间（由近到远）' },
   { value: 'tier', label: '分级' },
 ];
+const MAPPING_TARGET = 150;
+const COOPERATION = {
+  all: '全部合作意愿',
+  willing: '有意向（已卖进/需跟进）',
+  sold_in: '已卖进',
+  follow_up: '需跟进',
+  no_interest: '无意向/暂缓',
+  not_visited: '待拜访',
+};
 
 const MIN_PASSWORD_LENGTH = 8;
 
@@ -300,6 +309,116 @@ function isTierAPlus(tier) {
   return tier === 'S' || tier === 'A+' || tier === 'A';
 }
 
+function isDateInRange(dateKey, start, end) {
+  if (!dateKey || !start || !end) return false;
+  return dateKey >= start && dateKey <= end;
+}
+
+function monthStartKey(date = new Date()) {
+  const d = date instanceof Date ? date : new Date(date);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+}
+
+function pct(count, total) {
+  if (!total) return '0%';
+  return `${Math.round((count / total) * 1000) / 10}%`;
+}
+
+function normalizeUnitsLog(shop) {
+  const raw = shop?.units_log;
+  if (!Array.isArray(raw) || !raw.length) return [];
+  return raw
+    .map((e) => ({ date: e.date || '', units: Number(e.units) || 0 }))
+    .filter((e) => e.date)
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+}
+
+function todayUnitsValue(log, today = todayDateKey()) {
+  const entry = normalizeUnitsLog({ units_log: log }).find((e) => e.date === today);
+  return entry ? String(entry.units) : '';
+}
+
+function mergeUnitsLog(existingLog, todayUnitsText) {
+  const today = todayDateKey();
+  const text = String(todayUnitsText ?? '').trim();
+  const withoutToday = normalizeUnitsLog({ units_log: existingLog }).filter((e) => e.date !== today);
+  if (!text) return withoutToday;
+  const units = Number(text);
+  if (Number.isNaN(units) || units < 0) return withoutToday;
+  return [{ date: today, units }, ...withoutToday];
+}
+
+function unitsInRange(shop, start, end) {
+  return normalizeUnitsLog(shop)
+    .filter((e) => isDateInRange(e.date, start, end))
+    .reduce((sum, e) => sum + e.units, 0);
+}
+
+function shopVisitedInRange(shop, start, end) {
+  if (isDateInRange(shopUpdatedDateKey(shop), start, end)) return true;
+  return normalizeTrafficNotes(shop).some((n) => isDateInRange(n.date, start, end));
+}
+
+function placementInRange(shop, kind, start, end) {
+  const on = placementOn(shop, kind);
+  return on ? isDateInRange(on, start, end) : false;
+}
+
+function matchesCooperationFilter(status, filter) {
+  if (filter === 'all') return true;
+  if (filter === 'willing') return status === 'visited' || status === 'follow_up';
+  if (filter === 'sold_in') return status === 'visited';
+  return status === filter;
+}
+
+function computeAreaMetrics(shopList, start, end) {
+  const total = shopList.length;
+  const visitedCount = shopList.filter((s) => shopVisitedInRange(s, start, end)).length;
+  const mappedCount = shopList.filter(shopHasCoords).length;
+  const aPlusCount = shopList.filter((s) => isTierAPlus(s.tier)).length;
+  const soldInCount = shopList.filter((s) => s.status === 'visited').length;
+  const sampleCount = shopList.filter((s) => placementInRange(s, 'sample', start, end)).length;
+  const testCaseCount = shopList.filter((s) => placementInRange(s, 'test_case', start, end)).length;
+  const totalUnits = shopList.reduce((sum, s) => sum + unitsInRange(s, start, end), 0);
+  return {
+    total,
+    visitedCount,
+    mappedCount,
+    mappedPct: pct(mappedCount, MAPPING_TARGET),
+    aPlusCount,
+    aPlusPct: pct(aPlusCount, total),
+    sampleCount,
+    testCaseCount,
+    soldInCount,
+    soldInPct: pct(soldInCount, total),
+    totalUnits,
+  };
+}
+
+function applyShopFilters(list, { search, fTier, fStatus, fStarred, fCity, fSample, fTestCase, fAssignee, fCooperation, fSoldIn }) {
+  const q = search.toLowerCase().trim();
+  return list.filter((s) => {
+    if (fTier !== 'all') {
+      if (fTier === 'none' && s.tier) return false;
+      if (fTier !== 'none' && s.tier !== fTier) return false;
+    }
+    if (fStatus !== 'all' && s.status !== fStatus) return false;
+    if (fCooperation !== 'all' && !matchesCooperationFilter(s.status, fCooperation)) return false;
+    if (fSoldIn === 'yes' && s.status !== 'visited') return false;
+    if (fSoldIn === 'no' && s.status === 'visited') return false;
+    if (fStarred === 'yes' && !s.starred) return false;
+    if (fStarred === 'no' && s.starred) return false;
+    if (fCity !== 'all' && s.city !== fCity) return false;
+    if (fSample === 'yes' && !isPlaced(s, 'sample')) return false;
+    if (fSample === 'no' && isPlaced(s, 'sample')) return false;
+    if (fTestCase === 'yes' && !isPlaced(s, 'test_case')) return false;
+    if (fTestCase === 'no' && isPlaced(s, 'test_case')) return false;
+    if (fAssignee !== 'all' && (s.assigned_to || '') !== fAssignee) return false;
+    if (q && ![s.name, s.address, s.city, s.owner_name, s.staff_contact].some((v) => (v || '').toLowerCase().includes(q))) return false;
+    return true;
+  });
+}
+
 function buildDailyReportText(shopList) {
   const today = todayDateKey();
   const todayShops = shopList.filter((s) => shopUpdatedDateKey(s) === today);
@@ -308,6 +427,7 @@ function buildDailyReportText(shopList) {
   const newAPlusCount = newShops.filter((s) => isTierAPlus(s.tier)).length;
   const testCaseCount = todayShops.filter((s) => placedToday(s, 'test_case', today)).length;
   const sampleCount = todayShops.filter((s) => placedToday(s, 'sample', today)).length;
+  const totalUnits = todayShops.reduce((sum, s) => sum + unitsInRange(s, today, today), 0);
   return [
     `日期：${today}`,
     `新店：${newShops.length}`,
@@ -315,6 +435,7 @@ function buildDailyReportText(shopList) {
     `回访：${revisitShops.length}`,
     `样机投放数量：${sampleCount || ''}`,
     `试抽盒投放数量：${testCaseCount || ''}`,
+    `卖进总支数：${totalUnits || ''}`,
     `遇到的问题：`,
   ].join('\n');
 }
@@ -658,6 +779,17 @@ export default function App() {
   const [loadError, setLoadError] = useState('');
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState('created_at');
+  const [fTier, setFTier] = useState('all');
+  const [fStatus, setFStatus] = useState('all');
+  const [fCooperation, setFCooperation] = useState('all');
+  const [fSoldIn, setFSoldIn] = useState('all');
+  const [fStarred, setFStarred] = useState('all');
+  const [fCity, setFCity] = useState('all');
+  const [fSample, setFSample] = useState('all');
+  const [fTestCase, setFTestCase] = useState('all');
+  const [fAssignee, setFAssignee] = useState('all');
+  const [dashFrom, setDashFrom] = useState(() => monthStartKey());
+  const [dashTo, setDashTo] = useState(() => todayDateKey());
   const [dailyReportText, setDailyReportText] = useState('');
   const [dailyCopied, setDailyCopied] = useState(false);
   const [selected, setSelected] = useState(null);
@@ -803,6 +935,8 @@ export default function App() {
       sample_today: placedToday(shop, 'sample', today),
       traffic_notes: notes,
       traffic_note: todayNoteText(notes),
+      units_log: normalizeUnitsLog(shop),
+      units_today: todayUnitsValue(normalizeUnitsLog(shop), today),
     });
     setReportText('');
     setCopied(false);
@@ -838,6 +972,7 @@ export default function App() {
     const nextNotes = serializeTrafficNotes(mergeTrafficNotes(existingNotes, draft.traffic_note));
     const testNext = nextPlacement(prevShop, draft.test_case_today, 'test_case');
     const sampleNext = nextPlacement(prevShop, draft.sample_today, 'sample');
+    const nextUnitsLog = mergeUnitsLog(normalizeUnitsLog(prevShop), draft.units_today);
     const payload = withoutUndefined({
       ...draft,
       name: draft.name.trim(),
@@ -847,6 +982,7 @@ export default function App() {
       next_plan: nextPlanText,
       traffic_notes: nextNotes,
       traffic_note: nextNotes[0]?.text || '',
+      units_log: nextUnitsLog,
       test_case_placed: testNext.placed,
       test_case_placed_on: testNext.on,
       sample_placed: sampleNext.placed,
@@ -857,6 +993,7 @@ export default function App() {
     delete payload.updated_at;
     delete payload.test_case_today;
     delete payload.sample_today;
+    delete payload.units_today;
     setSaving(true);
     try {
       const geoQuery = geocodeQuery(payload);
@@ -913,6 +1050,18 @@ export default function App() {
             updated_at: serverTimestamp(),
           });
         }
+        const todayUnitsEntry = nextUnitsLog.find((e) => e.date === todayDateKey());
+        if (todayUnitsEntry) {
+          try {
+            await setDoc(doc(shopDoc(newOwner, selected), 'visits', todayUnitsEntry.date), {
+              date: todayUnitsEntry.date,
+              units: todayUnitsEntry.units,
+              updated_at: serverTimestamp(),
+            }, { merge: true });
+          } catch {
+            // visit write is best-effort
+          }
+        }
         setShops((prev) => {
           const next = { ...draft, ...payload, id: selected, assigned_to: newOwner, updated_at: new Date() };
           return [next, ...prev.filter((s) => s.id !== selected)];
@@ -942,6 +1091,7 @@ export default function App() {
       ['进货情况', draft.restock_status],
       ['是否放 Test Case', draft.test_case_today ? '是' : '否'],
       ['是否放 sample', draft.sample_today ? '是' : '否'],
+      ['今日卖进数量', draft.units_today || ''],
       ['热卖品牌明细', draft.brands_note],
       ['备注', draft.traffic_note],
       ['下次拜访计划', formatNextPlan(draft)],
@@ -983,10 +1133,43 @@ export default function App() {
   }
 
   const filtered = useMemo(() => {
-    const q = search.toLowerCase().trim();
-    const matched = shops.filter((s) => !q || [s.name, s.address, s.city, s.owner_name, s.staff_contact].some((v) => (v || '').toLowerCase().includes(q)));
+    const matched = applyShopFilters(shops, {
+      search, fTier, fStatus, fStarred, fCity, fSample, fTestCase, fAssignee, fCooperation, fSoldIn,
+    });
     return sortShops(matched, sortBy);
-  }, [shops, search, sortBy]);
+  }, [shops, search, sortBy, fTier, fStatus, fStarred, fCity, fSample, fTestCase, fAssignee, fCooperation, fSoldIn]);
+
+  const teamCities = useMemo(() => {
+    const pool = profile?.team_id === 'tampa' ? TAMPA_CITIES : ORLANDO_CITIES;
+    const fromShops = shops.map((s) => s.city).filter(Boolean);
+    return [...new Set([...pool, ...fromShops])].sort((a, b) => a.localeCompare(b));
+  }, [shops, profile?.team_id]);
+
+  const myShops = useMemo(() => {
+    if (profile?.role === 'manager') return shops;
+    return shops.filter((s) => s.assigned_to === profile?.id);
+  }, [shops, profile]);
+
+  const dashboardRows = useMemo(() => {
+    const start = dashFrom;
+    const end = dashTo;
+    if (!start || !end || start > end) return { mine: null, rows: [], team: null };
+
+    if (profile?.role === 'manager') {
+      const activeMembers = members.filter((m) => m.active);
+      const rows = activeMembers.map((m) => ({
+        id: m.id,
+        name: m.full_name || m.email || m.id,
+        ...computeAreaMetrics(shops.filter((s) => s.assigned_to === m.id), start, end),
+      }));
+      const team = computeAreaMetrics(shops, start, end);
+      const mine = rows.find((r) => r.id === profile.id) || computeAreaMetrics(shops.filter((s) => s.assigned_to === profile.id), start, end);
+      return { mine, rows, team };
+    }
+
+    const mine = computeAreaMetrics(myShops, start, end);
+    return { mine, rows: [], team: null };
+  }, [shops, members, profile, myShops, dashFrom, dashTo]);
   const draftNoteHistory = draft ? historyNotes(normalizeTrafficNotes(draft)) : [];
   const mappedCount = filtered.filter(shopHasCoords).length;
   const unmappedCount = filtered.filter((s) => geocodeQuery(s) && !shopHasCoords(s)).length;
@@ -1022,7 +1205,7 @@ export default function App() {
   if (!user) return <Login />;
 
   return (
-    <main className={view === 'map' ? 'app map-mode' : 'app'}>
+    <main className={view === 'map' ? 'app map-mode' : view === 'dashboard' ? 'app dashboard-mode' : 'app'}>
       <header>
         <div>
           <h1>门店拜访清单</h1>
@@ -1050,6 +1233,9 @@ export default function App() {
           <button type="button" className={view === 'map' ? 'on' : ''} onClick={() => setView('map')}>
             <Map size={15} />地图
           </button>
+          <button type="button" className={view === 'dashboard' ? 'on' : ''} onClick={() => setView('dashboard')}>
+            <LayoutDashboard size={15} />看板
+          </button>
         </div>
         <button className="primary" type="button" onClick={openNew}><Plus size={15} />添加店铺</button>
         <select className="sort-select" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
@@ -1061,13 +1247,64 @@ export default function App() {
           <button type="button" onClick={generateDailyReport}><Clipboard size={15} />生成今日汇报</button>
         )}
       </section>
+      {(view === 'list' || view === 'map') && (
+        <section className="filters">
+          <select className="filter-select" value={fTier} onChange={(e) => setFTier(e.target.value)} aria-label="分级筛选">
+            <option value="all">全部分级</option>
+            <option value="S">S</option>
+            <option value="A+">A+</option>
+            <option value="A">A</option>
+            <option value="B">B</option>
+            <option value="none">未分级</option>
+          </select>
+          <select className="filter-select" value={fStatus} onChange={(e) => setFStatus(e.target.value)} aria-label="拜访状态">
+            <option value="all">全部状态</option>
+            {Object.entries(STATUS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+          <select className="filter-select" value={fCooperation} onChange={(e) => setFCooperation(e.target.value)} aria-label="合作意愿">
+            {Object.entries(COOPERATION).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+          <select className="filter-select" value={fSoldIn} onChange={(e) => setFSoldIn(e.target.value)} aria-label="已卖进">
+            <option value="all">卖进状态</option>
+            <option value="yes">已卖进</option>
+            <option value="no">未卖进</option>
+          </select>
+          <select className="filter-select" value={fStarred} onChange={(e) => setFStarred(e.target.value)} aria-label="星标">
+            <option value="all">星标</option>
+            <option value="yes">星标店铺</option>
+            <option value="no">非星标</option>
+          </select>
+          <select className="filter-select" value={fCity} onChange={(e) => setFCity(e.target.value)} aria-label="城市">
+            <option value="all">全部城市</option>
+            {teamCities.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+          <select className="filter-select" value={fSample} onChange={(e) => setFSample(e.target.value)} aria-label="样机">
+            <option value="all">样机</option>
+            <option value="yes">已放样机</option>
+            <option value="no">未放样机</option>
+          </select>
+          <select className="filter-select" value={fTestCase} onChange={(e) => setFTestCase(e.target.value)} aria-label="试抽盒">
+            <option value="all">试抽盒</option>
+            <option value="yes">已放试抽盒</option>
+            <option value="no">未放试抽盒</option>
+          </select>
+          {profile?.role === 'manager' && (
+            <select className="filter-select" value={fAssignee} onChange={(e) => setFAssignee(e.target.value)} aria-label="负责人">
+              <option value="all">全部负责人</option>
+              {members.filter((m) => m.active).map((m) => (
+                <option key={m.id} value={m.id}>{m.full_name || m.email}</option>
+              ))}
+            </select>
+          )}
+        </section>
+      )}
       {view === 'list' && (
         <section className="daily-report">
           <textarea
             value={dailyReportText}
             onChange={(e) => setDailyReportText(e.target.value)}
-            placeholder={'点击「生成今日汇报」自动填充，可在此编辑\n\n日期：\n新店：\n新店中 A 级及以上：\n回访：\n样机投放数量：\n试抽盒投放数量：\n遇到的问题：'}
-            rows={9}
+            placeholder={'点击「生成今日汇报」自动填充，可在此编辑\n\n日期：\n新店：\n新店中 A 级及以上：\n回访：\n样机投放数量：\n试抽盒投放数量：\n卖进总支数：\n遇到的问题：'}
+            rows={10}
           />
           {dailyReportText && (
             <button type="button" onClick={copyDailyReport}>
@@ -1076,9 +1313,20 @@ export default function App() {
           )}
         </section>
       )}
-      {profile?.role === 'manager' && (
+      {view === 'dashboard' && (
+        <DashboardPanel
+          profile={profile}
+          dashFrom={dashFrom}
+          dashTo={dashTo}
+          onFromChange={setDashFrom}
+          onToChange={setDashTo}
+          dashboardRows={dashboardRows}
+        />
+      )}
+      {profile?.role === 'manager' && view !== 'dashboard' && (
         <div className="manager-note">Manager 模式：当前可查看团队全部门店 · {members.length} 个账号</div>
       )}
+      {(view === 'list' || view === 'map') && (
       <div className={view === 'map' ? 'shop-split' : ''}>
         <div className={view === 'map' ? 'shop-list-pane' : ''}>
           <div className="count">
@@ -1162,6 +1410,7 @@ export default function App() {
           </div>
         )}
       </div>
+      )}
       {draft && (
         <div className="modal" onMouseDown={() => { setDraft(null); setSelected(null); }}>
           <div className="editor" onMouseDown={(e) => e.stopPropagation()}>
@@ -1213,6 +1462,16 @@ export default function App() {
                 draft={draft}
                 onChange={(todayYes) => setDraft({ ...draft, sample_today: todayYes })}
               />
+              <Field label="今日卖进数量（支）">
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  placeholder="填写今天卖进支数，隔天可重新填写"
+                  value={draft.units_today}
+                  onChange={(e) => setDraft({ ...draft, units_today: e.target.value })}
+                />
+              </Field>
               {profile?.role === 'manager' && (
                 <Field label="负责人">
                   <select value={draft.assigned_to || profile.id} onChange={(e) => setDraft({ ...draft, assigned_to: e.target.value })}>
@@ -1329,6 +1588,119 @@ export default function App() {
         />
       )}
     </main>
+  );
+}
+
+function DashboardPanel({ profile, dashFrom, dashTo, onFromChange, onToChange, dashboardRows }) {
+  const { mine, rows, team } = dashboardRows;
+  const invalidRange = !dashFrom || !dashTo || dashFrom > dashTo;
+
+  return (
+    <section className="dashboard">
+      <div className="dashboard-head">
+        <div>
+          <h2>{profile?.role === 'manager' ? '团队区域看板' : '我的区域看板'}</h2>
+          <p>Mapping 完成比例统一以 {MAPPING_TARGET} 家门店为分母</p>
+        </div>
+        <div className="dashboard-range">
+          <label>
+            开始
+            <input type="date" value={dashFrom} onChange={(e) => onFromChange(e.target.value)} />
+          </label>
+          <label>
+            结束
+            <input type="date" value={dashTo} onChange={(e) => onToChange(e.target.value)} />
+          </label>
+        </div>
+      </div>
+      {invalidRange ? (
+        <p className="dashboard-empty">请选择有效的时间段</p>
+      ) : (
+        <>
+          {mine && (
+            <div className="metrics-grid">
+              <MetricCard label="负责区域跑店数" value={mine.visitedCount} hint={`${dashFrom} 至 ${dashTo}`} />
+              <MetricCard label="Mapping 完成" value={`${mine.mappedCount} / ${MAPPING_TARGET}`} sub={mine.mappedPct} />
+              <MetricCard label="A 级及以上" value={`${mine.aPlusCount} / ${mine.total}`} sub={mine.aPlusPct} />
+              <MetricCard label="样机投放" value={mine.sampleCount} />
+              <MetricCard label="试抽盒投放" value={mine.testCaseCount} />
+              <MetricCard label="卖进门店" value={`${mine.soldInCount} / ${mine.total}`} sub={mine.soldInPct} />
+              <MetricCard label="卖进总支数" value={mine.totalUnits} highlight />
+            </div>
+          )}
+          {profile?.role === 'manager' && team && (
+            <>
+              <h3 className="dashboard-section-title">团队汇总</h3>
+              <div className="metrics-grid team-summary">
+                <MetricCard label="团队跑店数" value={team.visitedCount} />
+                <MetricCard label="团队 Mapping" value={`${team.mappedCount} / ${MAPPING_TARGET}`} sub={team.mappedPct} />
+                <MetricCard label="团队 A 级及以上" value={`${team.aPlusCount} / ${team.total}`} sub={team.aPlusPct} />
+                <MetricCard label="团队样机投放" value={team.sampleCount} />
+                <MetricCard label="团队试抽盒投放" value={team.testCaseCount} />
+                <MetricCard label="团队卖进门店" value={`${team.soldInCount} / ${team.total}`} sub={team.soldInPct} />
+                <MetricCard label="团队卖进总支数" value={team.totalUnits} highlight />
+              </div>
+              {rows.length > 0 && (
+                <>
+                  <h3 className="dashboard-section-title">各负责人明细</h3>
+                  <div className="dashboard-table-wrap">
+                    <table className="dashboard-table">
+                      <thead>
+                        <tr>
+                          <th>负责人</th>
+                          <th>跑店数</th>
+                          <th>Mapping</th>
+                          <th>A级+</th>
+                          <th>样机</th>
+                          <th>试抽盒</th>
+                          <th>卖进门店</th>
+                          <th>卖进支数</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.map((row) => (
+                          <tr key={row.id}>
+                            <td>{row.name}</td>
+                            <td>{row.visitedCount}</td>
+                            <td>{row.mappedCount} ({row.mappedPct})</td>
+                            <td>{row.aPlusCount} ({row.aPlusPct})</td>
+                            <td>{row.sampleCount}</td>
+                            <td>{row.testCaseCount}</td>
+                            <td>{row.soldInCount} ({row.soldInPct})</td>
+                            <td>{row.totalUnits}</td>
+                          </tr>
+                        ))}
+                        <tr className="total-row">
+                          <td>团队合计</td>
+                          <td>{team.visitedCount}</td>
+                          <td>{team.mappedCount} ({team.mappedPct})</td>
+                          <td>{team.aPlusCount} ({team.aPlusPct})</td>
+                          <td>{team.sampleCount}</td>
+                          <td>{team.testCaseCount}</td>
+                          <td>{team.soldInCount} ({team.soldInPct})</td>
+                          <td>{team.totalUnits}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+            </>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+function MetricCard({ label, value, sub, hint, highlight }) {
+  return (
+    <div className={highlight ? 'metric-card highlight' : 'metric-card'}>
+      <span className="metric-label">{label}</span>
+      <strong className="metric-value">{value}</strong>
+      {sub && <span className="metric-sub">{sub}</span>}
+      {hint && <span className="metric-hint">{hint}</span>}
+    </div>
   );
 }
 
