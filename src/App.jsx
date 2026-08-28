@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Search, Plus, X, ExternalLink, LogOut, Save, Users, Clipboard, Copy, Star, Map, List, Eye, EyeOff, LayoutDashboard,
+  Search, Plus, X, ExternalLink, LogOut, Save, Users, Clipboard, Copy, Star, Map, List, Eye, EyeOff, LayoutDashboard, SlidersHorizontal,
 } from 'lucide-react';
 import {
   createUserWithEmailAndPassword,
@@ -96,16 +96,16 @@ const SORT_OPTIONS = [
   { value: 'starred', label: '星标店铺' },
   { value: 'updated_at', label: '更新时间' },
   { value: 'created_at', label: '创建时间' },
-  { value: 'next_follow_up', label: '下次跟进时间（由近到远）' },
+  { value: 'next_follow_up', label: '下次跟进' },
   { value: 'tier', label: '分级' },
 ];
 const MAPPING_TARGET = 150;
 const COOPERATION = {
-  all: '全部合作意愿',
-  willing: '有意向（已卖进/需跟进）',
+  all: '合作意愿',
+  willing: '有意向',
   sold_in: '已卖进',
   follow_up: '需跟进',
-  no_interest: '无意向/暂缓',
+  no_interest: '无意向',
   not_visited: '待拜访',
 };
 
@@ -801,6 +801,8 @@ export default function App() {
   const [hoveredShopId, setHoveredShopId] = useState(null);
   const [geocodeNote, setGeocodeNote] = useState('');
   const [accountOpen, setAccountOpen] = useState(false);
+  const [dailyReportOpen, setDailyReportOpen] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   useEffect(() => {
     if (!configured || !auth) {
@@ -1116,9 +1118,27 @@ export default function App() {
     }
   }
 
+  function clearFilters() {
+    setFTier('all');
+    setFStatus('all');
+    setFCooperation('all');
+    setFSoldIn('all');
+    setFStarred('all');
+    setFCity('all');
+    setFSample('all');
+    setFTestCase('all');
+    setFAssignee('all');
+  }
+
   function generateDailyReport() {
     setDailyReportText(buildDailyReportText(shops));
     setDailyCopied(false);
+  }
+
+  function openDailyReport() {
+    setDailyReportText((prev) => prev || buildDailyReportText(shops));
+    setDailyCopied(false);
+    setDailyReportOpen(true);
   }
 
   async function copyDailyReport() {
@@ -1175,6 +1195,116 @@ export default function App() {
   const unmappedCount = filtered.filter((s) => geocodeQuery(s) && !shopHasCoords(s)).length;
   const noAddressCount = filtered.filter((s) => !geocodeQuery(s)).length;
 
+  const activeFilterCount = [
+    fTier !== 'all',
+    fStatus !== 'all',
+    fCooperation !== 'all',
+    fSoldIn !== 'all',
+    fStarred !== 'all',
+    fCity !== 'all',
+    fSample !== 'all',
+    fTestCase !== 'all',
+    profile?.role === 'manager' && fAssignee !== 'all',
+  ].filter(Boolean).length;
+
+  const filterBar = (
+    <section className="filters">
+      <button
+        type="button"
+        className={activeFilterCount ? 'filter-launch on' : 'filter-launch'}
+        onClick={() => setFiltersOpen(true)}
+      >
+        <SlidersHorizontal size={15} />
+        筛选{activeFilterCount ? ` · ${activeFilterCount}` : ''}
+      </button>
+      <button className="primary add-shop" type="button" onClick={openNew}>
+        <Plus size={15} />添加店铺
+      </button>
+    </section>
+  );
+
+  const countRow = (
+    <div className="count-row">
+      <div className="count">
+        共 {filtered.length} 家店铺
+        {view === 'map' && ` · 地图上 ${mappedCount} 家`}
+        {view === 'map' && unmappedCount ? ` · ${unmappedCount} 家地址未定位` : ''}
+        {view === 'map' && noAddressCount ? ` · ${noAddressCount} 家没有地址` : ''}
+        {geocodeNote ? ` · ${geocodeNote}` : ''}
+      </div>
+      <select className="sort-select" value={sortBy} onChange={(e) => setSortBy(e.target.value)} aria-label="排序方式">
+        {SORT_OPTIONS.map((opt) => (
+          <option key={opt.value} value={opt.value}>{opt.label}</option>
+        ))}
+      </select>
+    </div>
+  );
+
+  const shopListPane = (
+    <div className="shop-list-pane">
+      {view === 'map' && countRow}
+      <section>
+        {filtered.map((s) => (
+          <article
+            className={[
+              'card',
+              s.starred ? 'starred' : '',
+              hoveredShopId === s.id ? 'pin-active' : '',
+            ].filter(Boolean).join(' ')}
+            key={s.id}
+            onClick={() => openShop(s)}
+            onMouseEnter={() => setHoveredShopId(s.id)}
+            onMouseLeave={() => setHoveredShopId(null)}
+          >
+            <div className="cardtop">
+              <div className="cardtitle">
+                <button
+                  type="button"
+                  className={s.starred ? 'star-btn active' : 'star-btn'}
+                  aria-label={s.starred ? '取消星标' : '加星标'}
+                  onClick={(e) => toggleStar(s, e)}
+                >
+                  <Star size={16} fill={s.starred ? 'currentColor' : 'none'} />
+                </button>
+                <div>
+                  <strong>{s.name}</strong>
+                  <small>{s.city}{s.address ? ` · ${s.address}` : ' · 地址待补充'}</small>
+                </div>
+              </div>
+              <div className="card-tags">
+                <span className="chip">{s.tier || '未分级'}</span>
+                <span className="chip">{STATUS[s.status]}</span>
+              </div>
+            </div>
+            <div className="meta">
+              {s.starred && <span className="star-tag">重点关注</span>}
+              {s.owner_name && <span>老板 {s.owner_name}</span>}
+              {s.distributor && <span>批发商 {s.distributor}</span>}
+              {isPlaced(s, 'test_case') && (
+                <span>已放 Test Case{formatMonthDay(placementOn(s, 'test_case')) ? ` · ${formatMonthDay(placementOn(s, 'test_case'))}` : ''}</span>
+              )}
+              {isPlaced(s, 'sample') && (
+                <span>已放 sample{formatMonthDay(placementOn(s, 'sample')) ? ` · ${formatMonthDay(placementOn(s, 'sample'))}` : ''}</span>
+              )}
+              {view === 'map' && s.address && !shopHasCoords(s) && (
+                <span>{s.geocode_failed ? '地址未能定位' : '定位中…'}</span>
+              )}
+            </div>
+            {normalizeTrafficNotes(s).map((n, i) => (
+              <p className="remark" key={`${n.date}-${i}`}>
+                {formatNoteStamp(n) && <span className="remark-time">{formatNoteStamp(n)}</span>}
+                {n.text}
+              </p>
+            ))}
+            {s.brands_note && <p>{s.brands_note}</p>}
+            {formatNextPlan(s) && <p className="next">下次：{formatNextPlan(s)}</p>}
+            {!formatNextPlan(s) && s.next_plan && <p className="next">下次：{s.next_plan}</p>}
+          </article>
+        ))}
+      </section>
+    </div>
+  );
+
   if (!configured) {
     return (
       <main className="login">
@@ -1206,27 +1336,12 @@ export default function App() {
 
   return (
     <main className={view === 'map' ? 'app map-mode' : view === 'dashboard' ? 'app dashboard-mode' : 'app'}>
-      <header>
-        <div>
+      <header className="app-top">
+        <div className="app-brand">
           <h1>门店拜访清单</h1>
           <span>{TEAM_LABEL[profile?.team_id] || profile?.team_id || 'Orlando'}</span>
         </div>
-        <div className="user">
-          <Users size={15} />
-          <button type="button" className="name-btn" onClick={() => setAccountOpen(true)}>
-            {profile?.full_name || user.email}
-          </button>
-          <b>{profile?.role === 'manager' ? 'Manager' : 'Sales'}</b>
-          <button type="button" onClick={() => signOut(auth)}><LogOut size={15} />退出</button>
-        </div>
-      </header>
-      {loadError && <div className="error">{loadError}</div>}
-      <section className="toolbar">
-        <div className="search">
-          <Search size={15} />
-          <input placeholder="搜索店名 / 地址 / 城市 / 联系人" value={search} onChange={(e) => setSearch(e.target.value)} />
-        </div>
-        <div className="view-toggle">
+        <nav className="app-tabs" aria-label="页面切换">
           <button type="button" className={view === 'list' ? 'on' : ''} onClick={() => setView('list')}>
             <List size={15} />列表
           </button>
@@ -1236,187 +1351,116 @@ export default function App() {
           <button type="button" className={view === 'dashboard' ? 'on' : ''} onClick={() => setView('dashboard')}>
             <LayoutDashboard size={15} />看板
           </button>
+        </nav>
+        <div className="user">
+          <Users size={15} />
+          <button type="button" className="name-btn" onClick={() => setAccountOpen(true)}>
+            {profile?.full_name || user.email}
+          </button>
+          <b>{profile?.role === 'manager' ? 'Manager' : 'Sales'}</b>
+          <button type="button" onClick={() => signOut(auth)}><LogOut size={15} />退出</button>
         </div>
-        <button className="primary" type="button" onClick={openNew}><Plus size={15} />添加店铺</button>
-        <select className="sort-select" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
-          {SORT_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>{opt.label}</option>
-          ))}
-        </select>
-        {view === 'list' && (
-          <button type="button" onClick={generateDailyReport}><Clipboard size={15} />生成今日汇报</button>
-        )}
-      </section>
-      {(view === 'list' || view === 'map') && (
-        <section className="filters">
-          <select className="filter-select" value={fTier} onChange={(e) => setFTier(e.target.value)} aria-label="分级筛选">
-            <option value="all">全部分级</option>
-            <option value="S">S</option>
-            <option value="A+">A+</option>
-            <option value="A">A</option>
-            <option value="B">B</option>
-            <option value="none">未分级</option>
-          </select>
-          <select className="filter-select" value={fStatus} onChange={(e) => setFStatus(e.target.value)} aria-label="拜访状态">
-            <option value="all">全部状态</option>
-            {Object.entries(STATUS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-          </select>
-          <select className="filter-select" value={fCooperation} onChange={(e) => setFCooperation(e.target.value)} aria-label="合作意愿">
-            {Object.entries(COOPERATION).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-          </select>
-          <select className="filter-select" value={fSoldIn} onChange={(e) => setFSoldIn(e.target.value)} aria-label="已卖进">
-            <option value="all">卖进状态</option>
-            <option value="yes">已卖进</option>
-            <option value="no">未卖进</option>
-          </select>
-          <select className="filter-select" value={fStarred} onChange={(e) => setFStarred(e.target.value)} aria-label="星标">
-            <option value="all">星标</option>
-            <option value="yes">星标店铺</option>
-            <option value="no">非星标</option>
-          </select>
-          <select className="filter-select" value={fCity} onChange={(e) => setFCity(e.target.value)} aria-label="城市">
-            <option value="all">全部城市</option>
-            {teamCities.map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
-          <select className="filter-select" value={fSample} onChange={(e) => setFSample(e.target.value)} aria-label="样机">
-            <option value="all">样机</option>
-            <option value="yes">已放样机</option>
-            <option value="no">未放样机</option>
-          </select>
-          <select className="filter-select" value={fTestCase} onChange={(e) => setFTestCase(e.target.value)} aria-label="试抽盒">
-            <option value="all">试抽盒</option>
-            <option value="yes">已放试抽盒</option>
-            <option value="no">未放试抽盒</option>
-          </select>
-          {profile?.role === 'manager' && (
-            <select className="filter-select" value={fAssignee} onChange={(e) => setFAssignee(e.target.value)} aria-label="负责人">
-              <option value="all">全部负责人</option>
-              {members.filter((m) => m.active).map((m) => (
-                <option key={m.id} value={m.id}>{m.full_name || m.email}</option>
-              ))}
-            </select>
-          )}
-        </section>
-      )}
+      </header>
+      {loadError && <div className="error app-top-error">{loadError}</div>}
       {view === 'list' && (
-        <section className="daily-report">
-          <textarea
-            value={dailyReportText}
-            onChange={(e) => setDailyReportText(e.target.value)}
-            placeholder={'点击「生成今日汇报」自动填充，可在此编辑\n\n日期：\n新店：\n新店中 A 级及以上：\n回访：\n样机投放数量：\n试抽盒投放数量：\n卖进总支数：\n遇到的问题：'}
-            rows={10}
-          />
-          {dailyReportText && (
-            <button type="button" onClick={copyDailyReport}>
-              <Copy size={14} />{dailyCopied ? '已复制' : '复制汇报'}
+        <div className="app-layout">
+          <aside className="app-rail">
+            <section className="toolbar">
+              <div className="search">
+                <Search size={15} />
+                <input placeholder="搜索店名 / 地址 / 城市 / 联系人" value={search} onChange={(e) => setSearch(e.target.value)} />
+              </div>
+            </section>
+            <section className="daily-report">
+              <button type="button" onClick={generateDailyReport}>
+                <Clipboard size={15} />生成今日汇报
+              </button>
+              <textarea
+                value={dailyReportText}
+                onChange={(e) => setDailyReportText(e.target.value)}
+                placeholder={'点击「生成今日汇报」自动填充，可在此编辑\n\n日期：\n新店：\n新店中 A 级及以上：\n回访：\n样机投放数量：\n试抽盒投放数量：\n卖进总支数：\n遇到的问题：'}
+                rows={10}
+              />
+              {dailyReportText && (
+                <button type="button" onClick={copyDailyReport}>
+                  <Copy size={14} />{dailyCopied ? '已复制' : '复制汇报'}
+                </button>
+              )}
+            </section>
+            <button className="primary daily-report-launch" type="button" onClick={openDailyReport}>
+              <Clipboard size={15} />生成今日汇报
             </button>
+            {profile?.role === 'manager' && (
+              <div className="manager-note">Manager 模式：当前可查看团队全部门店 · {members.length} 个账号</div>
+            )}
+          </aside>
+          <div className="app-content">
+            {filterBar}
+            {countRow}
+            <div className="shop-list-wrap">
+              {shopListPane}
+            </div>
+          </div>
+        </div>
+      )}
+      {view === 'map' && (
+        <div className="map-page">
+          <section className="toolbar">
+            <div className="search">
+              <Search size={15} />
+              <input placeholder="搜索店名 / 地址 / 城市 / 联系人" value={search} onChange={(e) => setSearch(e.target.value)} />
+            </div>
+          </section>
+          {filterBar}
+          {profile?.role === 'manager' && (
+            <div className="manager-note">Manager 模式：当前可查看团队全部门店 · {members.length} 个账号</div>
           )}
-        </section>
+          <div className="shop-split">
+            {shopListPane}
+            <div className="shop-map-pane">
+              <React.Suspense fallback={<div className="shop-map-fallback">地图加载中…</div>}>
+                <ShopMap
+                  shops={filtered}
+                  hoveredId={hoveredShopId}
+                  statusLabels={STATUS}
+                  onHover={setHoveredShopId}
+                  onOpen={openShop}
+                />
+              </React.Suspense>
+            </div>
+          </div>
+        </div>
       )}
       {view === 'dashboard' && (
-        <DashboardPanel
-          profile={profile}
-          dashFrom={dashFrom}
-          dashTo={dashTo}
-          onFromChange={setDashFrom}
-          onToChange={setDashTo}
-          dashboardRows={dashboardRows}
-        />
-      )}
-      {profile?.role === 'manager' && view !== 'dashboard' && (
-        <div className="manager-note">Manager 模式：当前可查看团队全部门店 · {members.length} 个账号</div>
-      )}
-      {(view === 'list' || view === 'map') && (
-      <div className={view === 'map' ? 'shop-split' : ''}>
-        <div className={view === 'map' ? 'shop-list-pane' : ''}>
-          <div className="count">
-            共 {filtered.length} 家店铺
-            {view === 'map' && ` · 地图上 ${mappedCount} 家`}
-            {view === 'map' && unmappedCount ? ` · ${unmappedCount} 家地址未定位` : ''}
-            {view === 'map' && noAddressCount ? ` · ${noAddressCount} 家没有地址` : ''}
-            {geocodeNote ? ` · ${geocodeNote}` : ''}
-          </div>
-          <section>
-            {filtered.map((s) => (
-              <article
-                className={[
-                  'card',
-                  s.starred ? 'starred' : '',
-                  hoveredShopId === s.id ? 'pin-active' : '',
-                ].filter(Boolean).join(' ')}
-                key={s.id}
-                onClick={() => openShop(s)}
-                onMouseEnter={() => setHoveredShopId(s.id)}
-                onMouseLeave={() => setHoveredShopId(null)}
-              >
-                <div className="cardtop">
-                  <div className="cardtitle">
-                    <button
-                      type="button"
-                      className={s.starred ? 'star-btn active' : 'star-btn'}
-                      aria-label={s.starred ? '取消星标' : '加星标'}
-                      onClick={(e) => toggleStar(s, e)}
-                    >
-                      <Star size={16} fill={s.starred ? 'currentColor' : 'none'} />
-                    </button>
-                    <div>
-                      <strong>{s.name}</strong>
-                      <small>{s.city}{s.address ? ` · ${s.address}` : ' · 地址待补充'}</small>
-                    </div>
-                  </div>
-                  <div>
-                    <span className="chip">{s.tier || '未分级'}</span>
-                    <span className="chip">{STATUS[s.status]}</span>
-                  </div>
-                </div>
-                <div className="meta">
-                  {s.starred && <span className="star-tag">重点关注</span>}
-                  {s.owner_name && <span>老板 {s.owner_name}</span>}
-                  {s.distributor && <span>批发商 {s.distributor}</span>}
-                  {isPlaced(s, 'test_case') && (
-                    <span>已放 Test Case{formatMonthDay(placementOn(s, 'test_case')) ? ` · ${formatMonthDay(placementOn(s, 'test_case'))}` : ''}</span>
-                  )}
-                  {isPlaced(s, 'sample') && (
-                    <span>已放 sample{formatMonthDay(placementOn(s, 'sample')) ? ` · ${formatMonthDay(placementOn(s, 'sample'))}` : ''}</span>
-                  )}
-                  {view === 'map' && s.address && !shopHasCoords(s) && (
-                    <span>{s.geocode_failed ? '地址未能定位' : '定位中…'}</span>
-                  )}
-                </div>
-                {normalizeTrafficNotes(s).map((n, i) => (
-                  <p className="remark" key={`${n.date}-${i}`}>
-                    {formatNoteStamp(n) && <span className="remark-time">{formatNoteStamp(n)}</span>}
-                    {n.text}
-                  </p>
-                ))}
-                {s.brands_note && <p>{s.brands_note}</p>}
-                {formatNextPlan(s) && <p className="next">下次：{formatNextPlan(s)}</p>}
-                {!formatNextPlan(s) && s.next_plan && <p className="next">下次：{s.next_plan}</p>}
-              </article>
-            ))}
-          </section>
+        <div className="dashboard-page">
+          <DashboardPanel
+            profile={profile}
+            dashFrom={dashFrom}
+            dashTo={dashTo}
+            onFromChange={setDashFrom}
+            onToChange={setDashTo}
+            dashboardRows={dashboardRows}
+          />
         </div>
-        {view === 'map' && (
-          <div className="shop-map-pane">
-            <React.Suspense fallback={<div className="shop-map-fallback">地图加载中…</div>}>
-              <ShopMap
-                shops={filtered}
-                hoveredId={hoveredShopId}
-                statusLabels={STATUS}
-                onHover={setHoveredShopId}
-                onOpen={openShop}
-              />
-            </React.Suspense>
-          </div>
-        )}
-      </div>
       )}
       {draft && (
         <div className="modal" onMouseDown={() => { setDraft(null); setSelected(null); }}>
           <div className="editor" onMouseDown={(e) => e.stopPropagation()}>
             <div className="editorhead">
               <h2>{selected === 'new' ? '添加店铺' : '编辑店铺'}</h2>
-              <button type="button" onClick={() => setDraft(null)}><X size={18} /></button>
+              <div className="editorhead-actions">
+                <button
+                  type="button"
+                  className={draft.starred ? 'star-btn editor-star active' : 'star-btn editor-star'}
+                  aria-pressed={draft.starred}
+                  aria-label={draft.starred ? '取消星标' : '加星标'}
+                  title="星标（定期重点关注）"
+                  onClick={() => setDraft({ ...draft, starred: !draft.starred })}
+                >
+                  <Star size={22} fill={draft.starred ? 'currentColor' : 'none'} />
+                </button>
+                <button type="button" onClick={() => setDraft(null)}><X size={18} /></button>
+              </div>
             </div>
             <div className="grid">
               <Field label="店铺名称"><input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></Field>
@@ -1437,12 +1481,6 @@ export default function App() {
               <Field label="拜访状态">
                 <select value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value })}>
                   {Object.entries(STATUS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                </select>
-              </Field>
-              <Field label="星标（定期重点关注）">
-                <select value={draft.starred ? 'yes' : 'no'} onChange={(e) => setDraft({ ...draft, starred: e.target.value === 'yes' })}>
-                  <option value="no">否</option>
-                  <option value="yes">是</option>
                 </select>
               </Field>
               <Field label="老板 / Decision maker"><input value={draft.owner_name} onChange={(e) => setDraft({ ...draft, owner_name: e.target.value })} /></Field>
@@ -1576,6 +1614,115 @@ export default function App() {
                 </a>
               )}
             </footer>
+          </div>
+        </div>
+      )}
+      {filtersOpen && (
+        <div className="modal" onMouseDown={() => setFiltersOpen(false)}>
+          <div className="editor filter-editor" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="editorhead">
+              <h2>筛选店铺</h2>
+              <button type="button" onClick={() => setFiltersOpen(false)}><X size={18} /></button>
+            </div>
+            <div className="grid filter-panel">
+              <Field label="分级">
+                <select value={fTier} onChange={(e) => setFTier(e.target.value)}>
+                  <option value="all">全部</option>
+                  <option value="S">S</option>
+                  <option value="A+">A+</option>
+                  <option value="A">A</option>
+                  <option value="B">B</option>
+                  <option value="none">未分级</option>
+                </select>
+              </Field>
+              <Field label="拜访状态">
+                <select value={fStatus} onChange={(e) => setFStatus(e.target.value)}>
+                  <option value="all">全部</option>
+                  {Object.entries(STATUS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                </select>
+              </Field>
+              <Field label="合作意愿">
+                <select value={fCooperation} onChange={(e) => setFCooperation(e.target.value)}>
+                  {Object.entries(COOPERATION).map(([k, v]) => (
+                    <option key={k} value={k}>{k === 'all' ? '全部' : v}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="卖进">
+                <select value={fSoldIn} onChange={(e) => setFSoldIn(e.target.value)}>
+                  <option value="all">全部</option>
+                  <option value="yes">已卖进</option>
+                  <option value="no">未卖进</option>
+                </select>
+              </Field>
+              <Field label="星标">
+                <select value={fStarred} onChange={(e) => setFStarred(e.target.value)}>
+                  <option value="all">全部</option>
+                  <option value="yes">星标店铺</option>
+                  <option value="no">非星标</option>
+                </select>
+              </Field>
+              <Field label="城市">
+                <select value={fCity} onChange={(e) => setFCity(e.target.value)}>
+                  <option value="all">全部</option>
+                  {teamCities.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </Field>
+              <Field label="样机">
+                <select value={fSample} onChange={(e) => setFSample(e.target.value)}>
+                  <option value="all">全部</option>
+                  <option value="yes">已放样机</option>
+                  <option value="no">未放样机</option>
+                </select>
+              </Field>
+              <Field label="试抽盒">
+                <select value={fTestCase} onChange={(e) => setFTestCase(e.target.value)}>
+                  <option value="all">全部</option>
+                  <option value="yes">已放试抽盒</option>
+                  <option value="no">未放试抽盒</option>
+                </select>
+              </Field>
+              {profile?.role === 'manager' && (
+                <Field label="负责人">
+                  <select value={fAssignee} onChange={(e) => setFAssignee(e.target.value)}>
+                    <option value="all">全部</option>
+                    {members.filter((m) => m.active).map((m) => (
+                      <option key={m.id} value={m.id}>{m.full_name || m.email}</option>
+                    ))}
+                  </select>
+                </Field>
+              )}
+            </div>
+            <footer>
+              <button type="button" onClick={clearFilters}>清除筛选</button>
+              <button className="primary" type="button" onClick={() => setFiltersOpen(false)}>完成</button>
+            </footer>
+          </div>
+        </div>
+      )}
+      {dailyReportOpen && (
+        <div className="modal" onMouseDown={() => setDailyReportOpen(false)}>
+          <div className="editor daily-report-editor" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="editorhead">
+              <h2>今日汇报</h2>
+              <button type="button" onClick={() => setDailyReportOpen(false)}><X size={18} /></button>
+            </div>
+            <div className="daily-report daily-report-modal-body">
+              <button type="button" onClick={generateDailyReport}>
+                <Clipboard size={15} />重新生成
+              </button>
+              <textarea
+                value={dailyReportText}
+                onChange={(e) => setDailyReportText(e.target.value)}
+                placeholder={'点击「重新生成」自动填充，可在此编辑\n\n日期：\n新店：\n新店中 A 级及以上：\n回访：\n样机投放数量：\n试抽盒投放数量：\n卖进总支数：\n遇到的问题：'}
+                rows={12}
+              />
+              {dailyReportText && (
+                <button type="button" onClick={copyDailyReport}>
+                  <Copy size={14} />{dailyCopied ? '已复制' : '复制汇报'}
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
