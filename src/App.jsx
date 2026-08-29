@@ -27,7 +27,7 @@ import {
   where,
   writeBatch,
 } from 'firebase/firestore';
-import { auth, configured, db, DEFAULT_TEAM_ID, googleProvider } from './firebase';
+import { auth, configured, db, googleProvider } from './firebase';
 import { geocodeAddress, geocodeQuery, GEOCODE_VERSION, needsGeocode, shopHasCoords } from './geocode';
 
 const ShopMap = React.lazy(() => import('./ShopMap'));
@@ -46,7 +46,15 @@ const TAMPA_CITIES = [
   'New Port Richey', 'Port Richey', 'Holiday', 'Madeira Beach', 'Treasure Island',
 ];
 const CITIES = [...ORLANDO_CITIES, ...TAMPA_CITIES];
+const TEAM_ORDER = ['tampa', 'orlando'];
 const TEAM_LABEL = { orlando: 'Orlando', tampa: 'Tampa' };
+
+function normalizeTeamId(value) {
+  const key = String(value || '').trim().toLowerCase();
+  if (key === 'tampa' || key.includes('tampa')) return 'tampa';
+  if (key === 'orlando' || key.includes('orlando')) return 'orlando';
+  return '';
+}
 const STATUS = {
   not_visited: '待拜访',
   visited: '已卖进/拜访',
@@ -54,7 +62,7 @@ const STATUS = {
   no_interest: '无意向/暂缓',
 };
 function defaultCity(teamId) {
-  return teamId === 'tampa' ? 'Clearwater' : 'Orlando';
+  return normalizeTeamId(teamId) === 'tampa' ? 'Clearwater' : 'Orlando';
 }
 
 const emptyShop = (teamId) => ({
@@ -395,6 +403,41 @@ function computeAreaMetrics(shopList, start, end) {
   };
 }
 
+function memberName(member) {
+  return member?.full_name || member?.email || member?.id || '';
+}
+
+function teamLabelOf(teamId) {
+  const id = normalizeTeamId(teamId);
+  return TEAM_LABEL[id] || '';
+}
+
+function shopTeamOf(shop, members) {
+  const fromShop = normalizeTeamId(shop?.team_id);
+  if (fromShop) return fromShop;
+  const owner = members.find((m) => m.id === shop?.assigned_to);
+  return normalizeTeamId(owner?.team_id);
+}
+
+function todayTouchedCount(shopList) {
+  const today = todayDateKey();
+  return shopList.filter((s) => (
+    shopUpdatedDateKey(s) === today
+    || normalizeTrafficNotes(s).some((n) => n.date === today)
+  )).length;
+}
+
+function groupMembersByTeam(members) {
+  const sales = members.filter((m) => m.active && m.role !== 'manager');
+  return TEAM_ORDER
+    .map((teamId) => ({
+      teamId,
+      label: TEAM_LABEL[teamId],
+      members: sales.filter((m) => normalizeTeamId(m.team_id) === teamId),
+    }))
+    .filter((g) => g.members.length);
+}
+
 function applyShopFilters(list, { search, fTier, fStatus, fStarred, fCity, fSample, fTestCase, fAssignee, fCooperation, fSoldIn }) {
   const q = search.toLowerCase().trim();
   return list.filter((s) => {
@@ -504,6 +547,7 @@ function shopFromSnap(item) {
 }
 
 let pendingSignupName = '';
+let pendingSignupTeam = '';
 
 function authEmailOf(user) {
   return user.email
@@ -515,7 +559,9 @@ async function ensureProfile(user) {
   const ref = doc(db, 'profiles', user.uid);
   const email = authEmailOf(user);
   const fullName = (pendingSignupName || user.displayName || email.split('@')[0] || '未命名').trim();
+  const teamId = normalizeTeamId(pendingSignupTeam);
   pendingSignupName = '';
+  pendingSignupTeam = '';
 
   let snap;
   try {
@@ -524,6 +570,8 @@ async function ensureProfile(user) {
     snap = null;
   }
   if (snap?.exists()) return { id: snap.id, ...snap.data() };
+
+  if (!teamId) return { needsRegion: true };
 
   try {
     await user.getIdToken(true);
@@ -535,7 +583,7 @@ async function ensureProfile(user) {
     full_name: fullName || '未命名',
     email,
     role: 'sales',
-    team_id: DEFAULT_TEAM_ID,
+    team_id: teamId,
     active: true,
   };
   await setDoc(ref, profile);
@@ -546,7 +594,7 @@ async function migrateLegacyShops(currentUser, profile, members) {
   let snap;
   try {
     const shopQuery = profile.role === 'manager'
-      ? query(collection(db, 'shops'), where('team_id', '==', profile.team_id))
+      ? collection(db, 'shops')
       : query(collection(db, 'shops'), where('assigned_to', '==', currentUser.uid));
     snap = await getDocs(shopQuery);
   } catch {
@@ -593,9 +641,15 @@ async function fetchTeamData(currentUser) {
     20000,
     '读取账号超时。请刷新页面，或检查网络是否拦截了 Firestore。',
   );
+  if (p.needsRegion) return { needsRegion: true, profile: null, shops: [], members: [] };
   let members = [];
   if (p.role === 'manager') {
-    const memberSnap = await getDocs(query(collection(db, 'profiles'), where('team_id', '==', p.team_id)));
+    let memberSnap;
+    try {
+      memberSnap = await getDocs(collection(db, 'profiles'));
+    } catch {
+      memberSnap = await getDocs(query(collection(db, 'profiles'), where('team_id', '==', p.team_id)));
+    }
     members = memberSnap.docs
       .map((item) => ({ id: item.id, ...item.data() }))
       .sort((a, b) => (a.full_name || a.email || '').localeCompare(b.full_name || b.email || ''));
@@ -607,7 +661,13 @@ async function fetchTeamData(currentUser) {
     ? [...new Set([currentUser.uid, ...members.map((m) => m.id)])]
     : [currentUser.uid];
   const shopSnaps = await withTimeout(
-    Promise.all(ownerIds.map((id) => getDocs(shopsCollection(id)))),
+    Promise.all(ownerIds.map(async (id) => {
+      try {
+        return await getDocs(shopsCollection(id));
+      } catch {
+        return { docs: [] };
+      }
+    })),
     20000,
     '读取门店超时。多半是浏览器连不上 Firestore，请硬刷新后再试；若仍失败，换 Chrome 打开同一网址。',
   );
@@ -629,6 +689,7 @@ function GoogleMark() {
 function Login() {
   const [mode, setMode] = useState('login');
   const [fullName, setFullName] = useState('');
+  const [teamId, setTeamId] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -641,6 +702,7 @@ function Login() {
     setMode(next);
     setErr('');
     setConfirm('');
+    setTeamId('');
   };
 
   const submit = async (e) => {
@@ -650,6 +712,10 @@ function Login() {
       const name = fullName.trim();
       if (!name) {
         setErr('请填写姓名');
+        return;
+      }
+      if (!normalizeTeamId(teamId)) {
+        setErr('请选择地区');
         return;
       }
       if (pwdIssues.length) {
@@ -665,6 +731,7 @@ function Login() {
     try {
       if (signup) {
         pendingSignupName = fullName.trim();
+        pendingSignupTeam = normalizeTeamId(teamId);
         const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
         await updateProfile(cred.user, { displayName: fullName.trim() });
       } else {
@@ -672,6 +739,7 @@ function Login() {
       }
     } catch (error) {
       pendingSignupName = '';
+      pendingSignupTeam = '';
       setErr(authMessage(error, mode));
     } finally {
       setBusy(false);
@@ -680,10 +748,20 @@ function Login() {
 
   const google = async () => {
     setErr('');
+    if (signup && !normalizeTeamId(teamId)) {
+      setErr('请先选择地区');
+      return;
+    }
     setBusy(true);
     try {
+      if (signup) {
+        pendingSignupName = fullName.trim();
+        pendingSignupTeam = normalizeTeamId(teamId);
+      }
       await signInWithPopup(auth, googleProvider);
     } catch (error) {
+      pendingSignupName = '';
+      pendingSignupTeam = '';
       if (error?.code === 'auth/account-exists-with-different-credential') {
         const existing = error.customData?.email;
         setErr(existing
@@ -701,7 +779,7 @@ function Login() {
     <main className="login">
       <form className="panel" onSubmit={submit}>
         <h1>门店拜访清单</h1>
-        <p>Orlando · {signup ? '创建账号' : 'Firebase 云端版'}</p>
+        <p>Tampa · Orlando · {signup ? '创建账号' : 'Firebase 云端版'}</p>
         {!signup && (
           <>
             <button className="google" type="button" onClick={google} disabled={busy}>
@@ -711,15 +789,26 @@ function Login() {
           </>
         )}
         {signup && (
-          <label>
-            姓名
-            <input
-              value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-              autoComplete="name"
-              required
-            />
-          </label>
+          <>
+            <label>
+              姓名
+              <input
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                autoComplete="name"
+                required
+              />
+            </label>
+            <label>
+              地区
+              <select value={teamId} onChange={(e) => setTeamId(e.target.value)} required>
+                <option value="">请选择</option>
+                {TEAM_ORDER.map((id) => (
+                  <option key={id} value={id}>{TEAM_LABEL[id]}</option>
+                ))}
+              </select>
+            </label>
+          </>
         )}
         <label>
           邮箱
@@ -762,9 +851,72 @@ function Login() {
         <button className="primary" disabled={busy}>
           {busy ? (signup ? '创建中…' : '登录中…') : (signup ? '创建账号' : '登录')}
         </button>
+        {signup && (
+          <>
+            <div className="or">或</div>
+            <button className="google" type="button" onClick={google} disabled={busy}>
+              <GoogleMark /> 使用 Google 账号创建
+            </button>
+          </>
+        )}
         <button className="auth-switch" type="button" onClick={() => switchMode(signup ? 'login' : 'signup')}>
           {signup ? '已有账号？去登录' : '没有账号？创建账号'}
         </button>
+      </form>
+    </main>
+  );
+}
+
+function RegionGate({ user, onDone }) {
+  const [teamId, setTeamId] = useState('');
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function submit(e) {
+    e.preventDefault();
+    const team = normalizeTeamId(teamId);
+    if (!team) {
+      setErr('请选择地区');
+      return;
+    }
+    setErr('');
+    setBusy(true);
+    pendingSignupTeam = team;
+    pendingSignupName = user.displayName || '';
+    try {
+      const data = await fetchTeamData(user);
+      if (data.needsRegion) {
+        setErr('请选择地区后再继续');
+        return;
+      }
+      onDone(data);
+    } catch (error) {
+      pendingSignupTeam = '';
+      setErr(readErrorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <main className="login">
+      <form className="panel" onSubmit={submit}>
+        <h1>选择地区</h1>
+        <p>首次登录请选择 Tampa 或 Orlando</p>
+        <label>
+          地区
+          <select value={teamId} onChange={(e) => setTeamId(e.target.value)} required>
+            <option value="">请选择</option>
+            {TEAM_ORDER.map((id) => (
+              <option key={id} value={id}>{TEAM_LABEL[id]}</option>
+            ))}
+          </select>
+        </label>
+        {err && <div className="error">{err}</div>}
+        <button className="primary" disabled={busy}>
+          {busy ? '保存中…' : '继续'}
+        </button>
+        <button className="auth-switch" type="button" onClick={() => signOut(auth)}>退出登录</button>
       </form>
     </main>
   );
@@ -788,6 +940,7 @@ export default function App() {
   const [fSample, setFSample] = useState('all');
   const [fTestCase, setFTestCase] = useState('all');
   const [fAssignee, setFAssignee] = useState('all');
+  const [focusedMemberId, setFocusedMemberId] = useState('');
   const [dashFrom, setDashFrom] = useState(() => monthStartKey());
   const [dashTo, setDashTo] = useState(() => todayDateKey());
   const [dailyReportText, setDailyReportText] = useState('');
@@ -803,6 +956,7 @@ export default function App() {
   const [accountOpen, setAccountOpen] = useState(false);
   const [dailyReportOpen, setDailyReportOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [needsRegion, setNeedsRegion] = useState(false);
 
   useEffect(() => {
     if (!configured || !auth) {
@@ -816,6 +970,7 @@ export default function App() {
         setProfile(null);
         setShops([]);
         setMembers([]);
+        setNeedsRegion(false);
         setLoadError('');
         setLoading(false);
         return;
@@ -825,9 +980,17 @@ export default function App() {
       try {
         const data = await fetchTeamData(next);
         if (cancelled) return;
-        setProfile(data.profile);
-        setShops(data.shops);
-        setMembers(data.members);
+        if (data.needsRegion) {
+          setNeedsRegion(true);
+          setProfile(null);
+          setShops([]);
+          setMembers([]);
+        } else {
+          setNeedsRegion(false);
+          setProfile(data.profile);
+          setShops(data.shops);
+          setMembers(data.members);
+        }
       } catch (error) {
         if (cancelled) return;
         setLoadError(readErrorMessage(error));
@@ -909,9 +1072,17 @@ export default function App() {
     setLoadError('');
     try {
       const data = await fetchTeamData(currentUser);
-      setProfile(data.profile);
-      setShops(data.shops);
-      setMembers(data.members);
+      if (data.needsRegion) {
+        setNeedsRegion(true);
+        setProfile(null);
+        setShops([]);
+        setMembers([]);
+      } else {
+        setNeedsRegion(false);
+        setProfile(data.profile);
+        setShops(data.shops);
+        setMembers(data.members);
+      }
     } catch (error) {
       setLoadError(readErrorMessage(error));
     } finally {
@@ -960,8 +1131,14 @@ export default function App() {
   }
 
   function openNew() {
+    const shop = emptyShop(profile?.team_id);
+    if (profile?.role === 'manager') {
+      const member = members.find((m) => m.id === (focusedMemberId || profile.id));
+      shop.assigned_to = member?.id || profile.id;
+      shop.city = defaultCity(member?.team_id || profile.team_id);
+    }
     setSelected('new');
-    setDraft(emptyShop(profile?.team_id));
+    setDraft(shop);
     setReportText('');
     setCopied(false);
   }
@@ -1016,9 +1193,13 @@ export default function App() {
           payload.geocode_version = GEOCODE_VERSION;
         }
       }
+      const assigneeId = profile.role === 'manager' ? (draft.assigned_to || profile.id) : profile.id;
+      const assigneeTeam = normalizeTeamId(members.find((m) => m.id === assigneeId)?.team_id)
+        || normalizeTeamId(profile.team_id)
+        || 'orlando';
+      payload.assigned_to = assigneeId;
+      payload.team_id = assigneeTeam;
       if (selected === 'new') {
-        payload.team_id = profile.team_id;
-        payload.assigned_to = profile.role === 'manager' ? (draft.assigned_to || profile.id) : profile.id;
         const ref = await addDoc(shopsCollection(payload.assigned_to), {
           ...payload,
           created_at: serverTimestamp(),
@@ -1028,8 +1209,9 @@ export default function App() {
       } else {
         const current = shops.find((s) => s.id === selected);
         const oldOwner = current?.assigned_to || profile.id;
-        const newOwner = profile.role === 'manager' ? (payload.assigned_to || oldOwner) : oldOwner;
+        const newOwner = payload.assigned_to || oldOwner;
         payload.assigned_to = newOwner;
+        payload.team_id = normalizeTeamId(members.find((m) => m.id === newOwner)?.team_id) || payload.team_id;
         if (newOwner !== oldOwner) {
           const oldRef = shopDoc(oldOwner, selected);
           const newRef = shopDoc(newOwner, selected);
@@ -1159,11 +1341,29 @@ export default function App() {
     return sortShops(matched, sortBy);
   }, [shops, search, sortBy, fTier, fStatus, fStarred, fCity, fSample, fTestCase, fAssignee, fCooperation, fSoldIn]);
 
+  const visibleShops = useMemo(() => {
+    if (view === 'list' && profile?.role === 'manager' && focusedMemberId) {
+      return filtered.filter((s) => (s.assigned_to || '') === focusedMemberId);
+    }
+    return filtered;
+  }, [view, profile, focusedMemberId, filtered]);
+
+  const memberGroups = useMemo(() => groupMembersByTeam(members), [members]);
+  const focusedMember = useMemo(
+    () => members.find((m) => m.id === focusedMemberId) || null,
+    [members, focusedMemberId],
+  );
+
   const teamCities = useMemo(() => {
-    const pool = profile?.team_id === 'tampa' ? TAMPA_CITIES : ORLANDO_CITIES;
+    const teamId = normalizeTeamId(profile?.role === 'manager' ? focusedMember?.team_id : profile?.team_id);
+    const pool = teamId === 'tampa'
+      ? TAMPA_CITIES
+      : teamId === 'orlando'
+        ? ORLANDO_CITIES
+        : [...ORLANDO_CITIES, ...TAMPA_CITIES];
     const fromShops = shops.map((s) => s.city).filter(Boolean);
     return [...new Set([...pool, ...fromShops])].sort((a, b) => a.localeCompare(b));
-  }, [shops, profile?.team_id]);
+  }, [shops, profile?.team_id, profile?.role, focusedMember]);
 
   const myShops = useMemo(() => {
     if (profile?.role === 'manager') return shops;
@@ -1173,27 +1373,43 @@ export default function App() {
   const dashboardRows = useMemo(() => {
     const start = dashFrom;
     const end = dashTo;
-    if (!start || !end || start > end) return { mine: null, rows: [], team: null };
+    if (!start || !end || start > end) return { mine: null, regions: [] };
 
     if (profile?.role === 'manager') {
-      const activeMembers = members.filter((m) => m.active);
-      const rows = activeMembers.map((m) => ({
-        id: m.id,
-        name: m.full_name || m.email || m.id,
-        ...computeAreaMetrics(shops.filter((s) => s.assigned_to === m.id), start, end),
-      }));
-      const team = computeAreaMetrics(shops, start, end);
-      const mine = rows.find((r) => r.id === profile.id) || computeAreaMetrics(shops.filter((s) => s.assigned_to === profile.id), start, end);
-      return { mine, rows, team };
+      const sales = members.filter((m) => m.active && m.role !== 'manager');
+      const regions = TEAM_ORDER.map((teamId) => {
+        const regionShops = shops.filter((s) => shopTeamOf(s, members) === teamId);
+        const regionMembers = sales.filter((m) => normalizeTeamId(m.team_id) === teamId);
+        return {
+          teamId,
+          label: TEAM_LABEL[teamId],
+          metrics: computeAreaMetrics(regionShops, start, end),
+          rows: regionMembers.map((m) => ({
+            id: m.id,
+            name: memberName(m),
+            ...computeAreaMetrics(shops.filter((s) => s.assigned_to === m.id), start, end),
+          })),
+        };
+      });
+      return { mine: null, regions };
     }
 
     const mine = computeAreaMetrics(myShops, start, end);
-    return { mine, rows: [], team: null };
+    return { mine, regions: [] };
   }, [shops, members, profile, myShops, dashFrom, dashTo]);
+
+  const focusedMetrics = useMemo(() => {
+    if (!focusedMember) return null;
+    const start = dashFrom;
+    const end = dashTo;
+    if (!start || !end || start > end) return null;
+    return computeAreaMetrics(shops.filter((s) => s.assigned_to === focusedMember.id), start, end);
+  }, [focusedMember, shops, dashFrom, dashTo]);
+
   const draftNoteHistory = draft ? historyNotes(normalizeTrafficNotes(draft)) : [];
-  const mappedCount = filtered.filter(shopHasCoords).length;
-  const unmappedCount = filtered.filter((s) => geocodeQuery(s) && !shopHasCoords(s)).length;
-  const noAddressCount = filtered.filter((s) => !geocodeQuery(s)).length;
+  const mappedCount = visibleShops.filter(shopHasCoords).length;
+  const unmappedCount = visibleShops.filter((s) => geocodeQuery(s) && !shopHasCoords(s)).length;
+  const noAddressCount = visibleShops.filter((s) => !geocodeQuery(s)).length;
 
   const activeFilterCount = [
     fTier !== 'all',
@@ -1226,7 +1442,7 @@ export default function App() {
   const countRow = (
     <div className="count-row">
       <div className="count">
-        共 {filtered.length} 家店铺
+        共 {visibleShops.length} 家店铺
         {view === 'map' && ` · 地图上 ${mappedCount} 家`}
         {view === 'map' && unmappedCount ? ` · ${unmappedCount} 家地址未定位` : ''}
         {view === 'map' && noAddressCount ? ` · ${noAddressCount} 家没有地址` : ''}
@@ -1244,7 +1460,14 @@ export default function App() {
     <div className="shop-list-pane">
       {view === 'map' && countRow}
       <section>
-        {filtered.map((s) => (
+        {view === 'list' && visibleShops.length === 0 && (
+          <p className="list-empty">
+            {profile?.role === 'manager' && focusedMember
+              ? `${memberName(focusedMember)} 还没有店铺`
+              : '暂无匹配的店铺'}
+          </p>
+        )}
+        {visibleShops.map((s) => (
           <article
             className={[
               'card',
@@ -1278,6 +1501,9 @@ export default function App() {
             </div>
             <div className="meta">
               {s.starred && <span className="star-tag">重点关注</span>}
+              {view === 'list' && profile?.role === 'manager' && !focusedMemberId && s.assigned_to && (
+                <span>{memberName(members.find((m) => m.id === s.assigned_to)) || '未分配'}</span>
+              )}
               {s.owner_name && <span>老板 {s.owner_name}</span>}
               {s.distributor && <span>批发商 {s.distributor}</span>}
               {isPlaced(s, 'test_case') && (
@@ -1333,13 +1559,31 @@ export default function App() {
     );
   }
   if (!user) return <Login />;
+  if (needsRegion) {
+    return (
+      <RegionGate
+        user={user}
+        onDone={(data) => {
+          setNeedsRegion(false);
+          setProfile(data.profile);
+          setShops(data.shops);
+          setMembers(data.members);
+        }}
+      />
+    );
+  }
+  if (!profile) return <div className="loading">加载中…</div>;
 
   return (
     <main className={view === 'map' ? 'app map-mode' : view === 'dashboard' ? 'app dashboard-mode' : 'app'}>
       <header className="app-top">
         <div className="app-brand">
           <h1>门店拜访清单</h1>
-          <span>{TEAM_LABEL[profile?.team_id] || profile?.team_id || 'Orlando'}</span>
+          <span>
+            {profile?.role === 'manager'
+              ? 'Tampa · Orlando'
+              : (teamLabelOf(profile?.team_id) || 'Orlando')}
+          </span>
         </div>
         <nav className="app-tabs" aria-label="页面切换">
           <button type="button" className={view === 'list' ? 'on' : ''} onClick={() => setView('list')}>
@@ -1371,31 +1615,81 @@ export default function App() {
                 <input placeholder="搜索店名 / 地址 / 城市 / 联系人" value={search} onChange={(e) => setSearch(e.target.value)} />
               </div>
             </section>
-            <section className="daily-report">
-              <button type="button" onClick={generateDailyReport}>
-                <Clipboard size={15} />生成今日汇报
-              </button>
-              <textarea
-                value={dailyReportText}
-                onChange={(e) => setDailyReportText(e.target.value)}
-                placeholder={'点击「生成今日汇报」自动填充，可在此编辑\n\n日期：\n新店：\n新店中 A 级及以上：\n回访：\n样机投放数量：\n试抽盒投放数量：\n卖进总支数：\n遇到的问题：'}
-                rows={10}
-              />
-              {dailyReportText && (
-                <button type="button" onClick={copyDailyReport}>
-                  <Copy size={14} />{dailyCopied ? '已复制' : '复制汇报'}
+            {profile?.role === 'manager' ? (
+              <section className="member-roster">
+                <h2>团队成员</h2>
+                <button
+                  type="button"
+                  className={!focusedMemberId ? 'member-item on' : 'member-item'}
+                  onClick={() => setFocusedMemberId('')}
+                >
+                  <span>全部成员</span>
+                  <small>{shops.length} 家</small>
                 </button>
-              )}
-            </section>
-            <button className="primary daily-report-launch" type="button" onClick={openDailyReport}>
-              <Clipboard size={15} />生成今日汇报
-            </button>
-            {profile?.role === 'manager' && (
-              <div className="manager-note">Manager 模式：当前可查看团队全部门店 · {members.length} 个账号</div>
+                {memberGroups.map((g) => (
+                  <div className="member-group" key={g.teamId || 'none'}>
+                    <h3>{g.label}</h3>
+                    {g.members.map((m) => {
+                      const theirShops = shops.filter((s) => s.assigned_to === m.id);
+                      const todayCount = todayTouchedCount(theirShops);
+                      return (
+                        <button
+                          key={m.id}
+                          type="button"
+                          className={focusedMemberId === m.id ? 'member-item on' : 'member-item'}
+                          onClick={() => {
+                            setFocusedMemberId(m.id);
+                            setFAssignee('all');
+                          }}
+                        >
+                          <span>{memberName(m)}</span>
+                          <small>
+                            {theirShops.length} 家
+                            {todayCount ? ` · 今日 ${todayCount}` : ''}
+                          </small>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ))}
+              </section>
+            ) : (
+              <>
+                <section className="daily-report">
+                  <button type="button" onClick={generateDailyReport}>
+                    <Clipboard size={15} />生成今日汇报
+                  </button>
+                  <textarea
+                    value={dailyReportText}
+                    onChange={(e) => setDailyReportText(e.target.value)}
+                    placeholder={'点击「生成今日汇报」自动填充，可在此编辑\n\n日期：\n新店：\n新店中 A 级及以上：\n回访：\n样机投放数量：\n试抽盒投放数量：\n卖进总支数：\n遇到的问题：'}
+                    rows={10}
+                  />
+                  {dailyReportText && (
+                    <button type="button" onClick={copyDailyReport}>
+                      <Copy size={14} />{dailyCopied ? '已复制' : '复制汇报'}
+                    </button>
+                  )}
+                </section>
+                <button className="primary daily-report-launch" type="button" onClick={openDailyReport}>
+                  <Clipboard size={15} />生成今日汇报
+                </button>
+              </>
             )}
           </aside>
           <div className="app-content">
             {filterBar}
+            {focusedMember && focusedMetrics && (
+              <PersonDashboardStrip
+                name={memberName(focusedMember)}
+                teamLabel={teamLabelOf(focusedMember.team_id)}
+                dashFrom={dashFrom}
+                dashTo={dashTo}
+                onFromChange={setDashFrom}
+                onToChange={setDashTo}
+                metrics={focusedMetrics}
+              />
+            )}
             {countRow}
             <div className="shop-list-wrap">
               {shopListPane}
@@ -1513,8 +1807,12 @@ export default function App() {
               {profile?.role === 'manager' && (
                 <Field label="负责人">
                   <select value={draft.assigned_to || profile.id} onChange={(e) => setDraft({ ...draft, assigned_to: e.target.value })}>
-                    {members.filter((m) => m.active).map((m) => (
-                      <option value={m.id} key={m.id}>{m.full_name || m.email} · {m.role}</option>
+                    {memberGroups.map((g) => (
+                      <optgroup key={g.teamId || 'none'} label={g.label}>
+                        {g.members.map((m) => (
+                          <option value={m.id} key={m.id}>{memberName(m)} · {m.role}</option>
+                        ))}
+                      </optgroup>
                     ))}
                   </select>
                 </Field>
@@ -1682,12 +1980,16 @@ export default function App() {
                   <option value="no">未放试抽盒</option>
                 </select>
               </Field>
-              {profile?.role === 'manager' && (
+              {profile?.role === 'manager' && !focusedMemberId && (
                 <Field label="负责人">
                   <select value={fAssignee} onChange={(e) => setFAssignee(e.target.value)}>
                     <option value="all">全部</option>
-                    {members.filter((m) => m.active).map((m) => (
-                      <option key={m.id} value={m.id}>{m.full_name || m.email}</option>
+                    {memberGroups.map((g) => (
+                      <optgroup key={g.teamId || 'none'} label={g.label}>
+                        {g.members.map((m) => (
+                          <option key={m.id} value={m.id}>{memberName(m)}</option>
+                        ))}
+                      </optgroup>
                     ))}
                   </select>
                 </Field>
@@ -1739,14 +2041,15 @@ export default function App() {
 }
 
 function DashboardPanel({ profile, dashFrom, dashTo, onFromChange, onToChange, dashboardRows }) {
-  const { mine, rows, team } = dashboardRows;
+  const { mine, regions } = dashboardRows;
   const invalidRange = !dashFrom || !dashTo || dashFrom > dashTo;
+  const isManager = profile?.role === 'manager';
 
   return (
     <section className="dashboard">
       <div className="dashboard-head">
         <div>
-          <h2>{profile?.role === 'manager' ? '团队区域看板' : '我的区域看板'}</h2>
+          <h2>{isManager ? '地区看板' : '我的区域看板'}</h2>
           <p>Mapping 完成比例统一以 {MAPPING_TARGET} 家门店为分母</p>
         </div>
         <div className="dashboard-range">
@@ -1762,81 +2065,110 @@ function DashboardPanel({ profile, dashFrom, dashTo, onFromChange, onToChange, d
       </div>
       {invalidRange ? (
         <p className="dashboard-empty">请选择有效的时间段</p>
-      ) : (
-        <>
-          {mine && (
-            <div className="metrics-grid">
-              <MetricCard label="负责区域跑店数" value={mine.visitedCount} hint={`${dashFrom} 至 ${dashTo}`} />
-              <MetricCard label="Mapping 完成" value={`${mine.mappedCount} / ${MAPPING_TARGET}`} sub={mine.mappedPct} />
-              <MetricCard label="A 级及以上" value={`${mine.aPlusCount} / ${mine.total}`} sub={mine.aPlusPct} />
-              <MetricCard label="样机投放" value={mine.sampleCount} />
-              <MetricCard label="试抽盒投放" value={mine.testCaseCount} />
-              <MetricCard label="卖进门店" value={`${mine.soldInCount} / ${mine.total}`} sub={mine.soldInPct} />
-              <MetricCard label="卖进总支数" value={mine.totalUnits} highlight />
-            </div>
-          )}
-          {profile?.role === 'manager' && team && (
-            <>
-              <h3 className="dashboard-section-title">团队汇总</h3>
-              <div className="metrics-grid team-summary">
-                <MetricCard label="团队跑店数" value={team.visitedCount} />
-                <MetricCard label="团队 Mapping" value={`${team.mappedCount} / ${MAPPING_TARGET}`} sub={team.mappedPct} />
-                <MetricCard label="团队 A 级及以上" value={`${team.aPlusCount} / ${team.total}`} sub={team.aPlusPct} />
-                <MetricCard label="团队样机投放" value={team.sampleCount} />
-                <MetricCard label="团队试抽盒投放" value={team.testCaseCount} />
-                <MetricCard label="团队卖进门店" value={`${team.soldInCount} / ${team.total}`} sub={team.soldInPct} />
-                <MetricCard label="团队卖进总支数" value={team.totalUnits} highlight />
-              </div>
-              {rows.length > 0 && (
-                <>
-                  <h3 className="dashboard-section-title">各负责人明细</h3>
-                  <div className="dashboard-table-wrap">
-                    <table className="dashboard-table">
-                      <thead>
-                        <tr>
-                          <th>负责人</th>
-                          <th>跑店数</th>
-                          <th>Mapping</th>
-                          <th>A级+</th>
-                          <th>样机</th>
-                          <th>试抽盒</th>
-                          <th>卖进门店</th>
-                          <th>卖进支数</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {rows.map((row) => (
-                          <tr key={row.id}>
-                            <td>{row.name}</td>
-                            <td>{row.visitedCount}</td>
-                            <td>{row.mappedCount} ({row.mappedPct})</td>
-                            <td>{row.aPlusCount} ({row.aPlusPct})</td>
-                            <td>{row.sampleCount}</td>
-                            <td>{row.testCaseCount}</td>
-                            <td>{row.soldInCount} ({row.soldInPct})</td>
-                            <td>{row.totalUnits}</td>
-                          </tr>
-                        ))}
-                        <tr className="total-row">
-                          <td>团队合计</td>
-                          <td>{team.visitedCount}</td>
-                          <td>{team.mappedCount} ({team.mappedPct})</td>
-                          <td>{team.aPlusCount} ({team.aPlusPct})</td>
-                          <td>{team.sampleCount}</td>
-                          <td>{team.testCaseCount}</td>
-                          <td>{team.soldInCount} ({team.soldInPct})</td>
-                          <td>{team.totalUnits}</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                </>
-              )}
-            </>
-          )}
-        </>
-      )}
+      ) : isManager ? (
+        regions.length ? regions.map((region) => (
+          <div className="dashboard-region" key={region.teamId || region.label}>
+            <h3 className="dashboard-section-title">{region.label}</h3>
+            <AreaMetricsGrid metrics={region.metrics} className="metrics-grid team-summary" />
+            {region.rows.length > 0 && (
+              <>
+                <h4 className="dashboard-subtitle">各负责人明细</h4>
+                <MemberMetricsTable rows={region.rows} total={region.metrics} totalLabel={`${region.label}合计`} />
+              </>
+            )}
+          </div>
+        )) : (
+          <p className="dashboard-empty">暂无地区数据</p>
+        )
+      ) : mine ? (
+        <AreaMetricsGrid metrics={mine} hint={`${dashFrom} 至 ${dashTo}`} visitedLabel="负责区域跑店数" />
+      ) : null}
     </section>
+  );
+}
+
+function PersonDashboardStrip({ name, teamLabel, dashFrom, dashTo, onFromChange, onToChange, metrics }) {
+  return (
+    <section className="person-dash">
+      <div className="person-dash-head">
+        <div>
+          <h3>{name}</h3>
+          <p>{teamLabel || ''}</p>
+        </div>
+        <div className="dashboard-range">
+          <label>
+            开始
+            <input type="date" value={dashFrom} onChange={(e) => onFromChange(e.target.value)} />
+          </label>
+          <label>
+            结束
+            <input type="date" value={dashTo} onChange={(e) => onToChange(e.target.value)} />
+          </label>
+        </div>
+      </div>
+      <AreaMetricsGrid metrics={metrics} visitedLabel="跑店数" />
+    </section>
+  );
+}
+
+function AreaMetricsGrid({ metrics, className, hint, visitedLabel = '跑店数' }) {
+  return (
+    <div className={className || 'metrics-grid'}>
+      <MetricCard label={visitedLabel} value={metrics.visitedCount} hint={hint} />
+      <MetricCard label="Mapping 完成" value={`${metrics.mappedCount} / ${MAPPING_TARGET}`} sub={metrics.mappedPct} />
+      <MetricCard label="A 级及以上" value={`${metrics.aPlusCount} / ${metrics.total}`} sub={metrics.aPlusPct} />
+      <MetricCard label="样机投放" value={metrics.sampleCount} />
+      <MetricCard label="试抽盒投放" value={metrics.testCaseCount} />
+      <MetricCard label="卖进门店" value={`${metrics.soldInCount} / ${metrics.total}`} sub={metrics.soldInPct} />
+      <MetricCard label="卖进总支数" value={metrics.totalUnits} highlight />
+    </div>
+  );
+}
+
+function MemberMetricsTable({ rows, total, totalLabel }) {
+  return (
+    <div className="dashboard-table-wrap">
+      <table className="dashboard-table">
+        <thead>
+          <tr>
+            <th>负责人</th>
+            <th>跑店数</th>
+            <th>Mapping</th>
+            <th>A级+</th>
+            <th>样机</th>
+            <th>试抽盒</th>
+            <th>卖进门店</th>
+            <th>卖进支数</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.id}>
+              <td>{row.name}</td>
+              <td>{row.visitedCount}</td>
+              <td>{row.mappedCount} ({row.mappedPct})</td>
+              <td>{row.aPlusCount} ({row.aPlusPct})</td>
+              <td>{row.sampleCount}</td>
+              <td>{row.testCaseCount}</td>
+              <td>{row.soldInCount} ({row.soldInPct})</td>
+              <td>{row.totalUnits}</td>
+            </tr>
+          ))}
+          {total && (
+            <tr className="total-row">
+              <td>{totalLabel || '合计'}</td>
+              <td>{total.visitedCount}</td>
+              <td>{total.mappedCount} ({total.mappedPct})</td>
+              <td>{total.aPlusCount} ({total.aPlusPct})</td>
+              <td>{total.sampleCount}</td>
+              <td>{total.testCaseCount}</td>
+              <td>{total.soldInCount} ({total.soldInPct})</td>
+              <td>{total.totalUnits}</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

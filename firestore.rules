@@ -21,15 +21,10 @@ service cloud.firestore {
       return hasProfile() && me().role == 'manager';
     }
 
-    function isTeammate(userId) {
-      return exists(/databases/$(database)/documents/profiles/$(userId))
-        && get(/databases/$(database)/documents/profiles/$(userId)).data.team_id == me().team_id;
-    }
-
     function canAccessOwnedShop(userId) {
       return hasProfile() && (
         request.auth.uid == userId ||
-        (isManager() && isTeammate(userId))
+        isManager()
       );
     }
 
@@ -37,14 +32,14 @@ service cloud.firestore {
       let shop = get(/databases/$(database)/documents/shops/$(shopId)).data;
       return hasProfile() && (
         shop.assigned_to == request.auth.uid ||
-        (isManager() && shop.team_id == me().team_id)
+        isManager()
       );
     }
 
     match /profiles/{userId} {
       allow read: if signedIn() && (
         request.auth.uid == userId ||
-        (isManager() && resource.data.team_id == me().team_id)
+        isManager()
       );
 
       allow create: if signedIn()
@@ -65,18 +60,20 @@ service cloud.firestore {
         allow read: if canAccessOwnedShop(userId);
 
         allow create: if hasProfile()
-          && request.resource.data.team_id == me().team_id
           && request.resource.data.assigned_to == userId
           && (
-            request.auth.uid == userId ||
-            (isManager() && isTeammate(userId))
+            (request.auth.uid == userId && request.resource.data.team_id == me().team_id)
+            || isManager()
           );
 
         allow update: if canAccessOwnedShop(userId)
-          && request.resource.data.team_id == resource.data.team_id
-          && request.resource.data.assigned_to == userId;
+          && request.resource.data.assigned_to == userId
+          && (
+            request.resource.data.team_id == resource.data.team_id
+            || isManager()
+          );
 
-        allow delete: if isManager() && resource.data.team_id == me().team_id;
+        allow delete: if isManager();
 
         match /visits/{visitId} {
           allow read, create, update, delete: if canAccessOwnedShop(userId);
@@ -88,12 +85,12 @@ service cloud.firestore {
     match /shops/{shopId} {
       allow read: if hasProfile() && (
         resource.data.assigned_to == request.auth.uid ||
-        (isManager() && resource.data.team_id == me().team_id)
+        isManager()
       );
 
       allow delete: if hasProfile() && (
         resource.data.assigned_to == request.auth.uid ||
-        (isManager() && resource.data.team_id == me().team_id)
+        isManager()
       );
 
       match /visits/{visitId} {
