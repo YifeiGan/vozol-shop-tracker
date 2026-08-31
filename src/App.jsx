@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Search, Plus, X, ExternalLink, LogOut, Save, Users, Clipboard, Copy, Star, Map, List, Eye, EyeOff, LayoutDashboard, SlidersHorizontal,
+  Search, Plus, X, ExternalLink, LogOut, Save, Users, Clipboard, Copy, Star, Map, List, Eye, EyeOff, LayoutDashboard, SlidersHorizontal, Download,
 } from 'lucide-react';
 import {
   createUserWithEmailAndPassword,
@@ -65,16 +65,25 @@ function defaultCity(teamId) {
   return normalizeTeamId(teamId) === 'tampa' ? 'Clearwater' : 'Orlando';
 }
 
-const emptyShop = (teamId) => ({
-  name: '', address: '', city: defaultCity(teamId), phone: '', tier: '', status: 'not_visited',
-  is_chain: false, chain_name: '', chain_total_stores: '', staff_contact: '', owner_name: '',
-  owner_schedule: '', contact_role: '', store_number: '', restock_status: '', distributor: '',
-  test_case_placed: false, sample_placed: false, test_case_placed_on: '', sample_placed_on: '',
-  test_case_today: false, sample_today: false,
-  traffic_note: '', traffic_notes: [], brands_note: '', next_plan: '',
-  next_plan_date: '', next_plan_time: '', source_url: '', starred: false,
-});
+function emptyShop(teamId) {
+  return {
+    name: '', address: '', city: defaultCity(teamId), phone: '', tier: '', status: 'not_visited',
+    is_chain: false, chain_name: '', chain_total_stores: '', chain_a_plus_count: '', staff_contact: '', owner_name: '',
+    owner_schedule: '', contact_role: '', store_number: '', restock_status: '', distributor: '',
+    test_case_placed: false, sample_placed: false, test_case_placed_on: '', sample_placed_on: '',
+    test_case_today: false, sample_today: false,
+    traffic_note: '', traffic_notes: [], brands_note: '', next_plan: '',
+    popup_notes: [], popup_date: todayDateKey(), popup_flow: '', popup_vape_buyers: '', popup_vozol_buyers: '',
+    next_plan_date: '', next_plan_time: '', source_url: '', starred: false,
+  };
+}
 const MAX_TRAFFIC_NOTES = 2;
+const MAX_POPUP_NOTES = 2;
+const POPUP_FIELDS = [
+  { key: 'flow', draftKey: 'popup_flow', label: '1、人流情况' },
+  { key: 'vape_buyers', draftKey: 'popup_vape_buyers', label: '2、买电子烟人数' },
+  { key: 'vozol_buyers', draftKey: 'popup_vozol_buyers', label: '3、买 VOZOL 人数' },
+];
 
 function formatNextPlan(shop) {
   const date = (shop?.next_plan_date || '').trim();
@@ -108,6 +117,7 @@ const SORT_OPTIONS = [
   { value: 'tier', label: '分级' },
 ];
 const MAPPING_TARGET = 150;
+const CHAIN_MIN_STORES = 5;
 const COOPERATION = {
   all: '合作意愿',
   willing: '有意向',
@@ -262,6 +272,103 @@ function serializeTrafficNotes(notes) {
   }));
 }
 
+function emptyPopupEntry() {
+  return { flow: '', vape_buyers: '', vozol_buyers: '' };
+}
+
+function popupHasContent(entry) {
+  return POPUP_FIELDS.some((field) => String(entry?.[field.key] || '').trim());
+}
+
+function normalizePopupNotes(shop) {
+  const raw = shop?.popup_notes;
+  if (!Array.isArray(raw) || !raw.length) return [];
+  return raw
+    .map((n) => ({
+      date: n.date || localDateKeyFromTimestamp(n.at) || '',
+      flow: String(n.flow || '').trim(),
+      vape_buyers: String(n.vape_buyers || '').trim(),
+      vozol_buyers: String(n.vozol_buyers || '').trim(),
+      at: timeValue(n.at),
+    }))
+    .filter(popupHasContent)
+    .sort((a, b) => {
+      const byDate = String(b.date).localeCompare(String(a.date));
+      return byDate || (timeValue(b.at) - timeValue(a.at));
+    })
+    .slice(0, MAX_POPUP_NOTES);
+}
+
+function todayPopupEntry(notes, today = todayDateKey()) {
+  return notes.find((n) => n.date === today) || emptyPopupEntry();
+}
+
+function popupDraftFields(entry) {
+  return {
+    popup_flow: entry?.flow || '',
+    popup_vape_buyers: entry?.vape_buyers || '',
+    popup_vozol_buyers: entry?.vozol_buyers || '',
+  };
+}
+
+function applyPopupDate(draft, nextDate) {
+  const today = todayDateKey();
+  const date = String(nextDate || '').trim() || today;
+  const existing = date === today
+    ? todayPopupEntry(normalizePopupNotes(draft), today)
+    : emptyPopupEntry();
+  return {
+    ...draft,
+    popup_date: date,
+    ...popupDraftFields(existing),
+  };
+}
+
+function mergePopupNotes(existingNotes, entry, dateKey) {
+  const date = String(dateKey || '').trim();
+  if (!date) return existingNotes.slice(0, MAX_POPUP_NOTES);
+  const next = {
+    flow: String(entry?.flow || '').trim(),
+    vape_buyers: String(entry?.vape_buyers || '').trim(),
+    vozol_buyers: String(entry?.vozol_buyers || '').trim(),
+  };
+  const withoutDate = existingNotes.filter((n) => n.date !== date);
+  const today = todayDateKey();
+  if (!popupHasContent(next)) {
+    if (date === today) return withoutDate.slice(0, MAX_POPUP_NOTES);
+    return existingNotes.slice(0, MAX_POPUP_NOTES);
+  }
+  const prev = existingNotes.find((n) => n.date === date);
+  const same = prev
+    && prev.flow === next.flow
+    && prev.vape_buyers === next.vape_buyers
+    && prev.vozol_buyers === next.vozol_buyers;
+  const at = same ? (prev.at || Date.now()) : Date.now();
+  return [{ date, ...next, at }, ...withoutDate]
+    .sort((a, b) => {
+      const byDate = String(b.date).localeCompare(String(a.date));
+      return byDate || (timeValue(b.at) - timeValue(a.at));
+    })
+    .slice(0, MAX_POPUP_NOTES);
+}
+
+function serializePopupNotes(notes) {
+  return notes.slice(0, MAX_POPUP_NOTES).map((n) => ({
+    date: n.date,
+    flow: n.flow,
+    vape_buyers: n.vape_buyers,
+    vozol_buyers: n.vozol_buyers,
+    at: timeValue(n.at) || Date.now(),
+  }));
+}
+
+function formatPopupNoteText(entry) {
+  if (!popupHasContent(entry)) return '';
+  return POPUP_FIELDS
+    .map((field) => `${field.label}：${String(entry?.[field.key] || '').trim()}`)
+    .join('\n');
+}
+
 function placementOn(shop, kind) {
   return String(shop?.[`${kind}_placed_on`] || '').trim();
 }
@@ -315,6 +422,10 @@ function localDateKeyFromTimestamp(value) {
 
 function isTierAPlus(tier) {
   return tier === 'S' || tier === 'A+' || tier === 'A';
+}
+
+function isChainShop(shop) {
+  return Boolean(shop?.is_chain) && Number(shop.chain_total_stores) >= CHAIN_MIN_STORES;
 }
 
 function isDateInRange(dateKey, start, end) {
@@ -481,6 +592,144 @@ function buildDailyReportText(shopList) {
     `卖进总支数：${totalUnits || ''}`,
     `遇到的问题：`,
   ].join('\n');
+}
+
+const CSV_EXPORT_HEADERS = [
+  '人员',
+  '店铺名称',
+  '地址',
+  '店铺类型',
+  'VISIT DATE 最近3次日期',
+  '店铺数量（连锁店标注店铺数量，单店填1）',
+  '评级/Ranking（S,A+,A,B)s>60pcs/daily,A+>40pcs daily,A>30pcs/dailyB<30PCS/DAILY',
+  '老板/采购/Decision maker',
+  '电话/Phone',
+  '卖进情况（已卖进/待跟进/拒绝/寄售）',
+  '合作意愿（愿意拿货-极高，有兴趣进一步了解/愿意放试抽盒-高，只要样机-中，没兴趣-低）',
+  '店铺基础信息',
+  '是否留样机',
+  '是否放试抽盒',
+  '主要拿货二级/Main distros to Purchase',
+  'POP UP Situation\u00a0\n1、flow of people\n2、How many people buy vapes\n3、How many people buy VOZOL products（带日期，保留最近两次记录）',
+];
+const SELL_STATUS_CSV = {
+  visited: '已卖进',
+  follow_up: '待跟进',
+  no_interest: '拒绝',
+  not_visited: '',
+};
+
+function csvEscape(value) {
+  const text = value == null ? '' : String(value);
+  if (/[",\r\n]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
+  return text;
+}
+
+function formatCsvVisitDate(dateKey) {
+  const m = String(dateKey || '').match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (!m) return '';
+  return `${Number(m[1])}/${Number(m[2])}/${Number(m[3])}`;
+}
+
+function exportStoreCount(shop) {
+  const chainCount = Number(shop?.chain_total_stores);
+  if (Number.isFinite(chainCount) && chainCount > 0) return String(chainCount);
+  const m = String(shop?.store_number || '').match(/(\d+)/);
+  if (m) return m[1];
+  return '1';
+}
+
+function exportSellStatus(shop) {
+  const restock = String(shop?.restock_status || '').trim();
+  if (['已卖进', '待跟进', '拒绝', '寄售'].includes(restock)) return restock;
+  return SELL_STATUS_CSV[shop?.status] || '';
+}
+
+function exportCooperation(shop) {
+  if (shop?.status === 'no_interest') return '低';
+  if (shop?.starred) return '极高';
+  if (isPlaced(shop, 'test_case')) return '高';
+  return '中';
+}
+
+function exportVisitDateCell(shop) {
+  const dates = [];
+  const push = (key) => {
+    const formatted = formatCsvVisitDate(key);
+    if (formatted && !dates.includes(formatted)) dates.push(formatted);
+  };
+  normalizeTrafficNotes(shop).forEach((n) => push(n.date));
+  push(shopUpdatedDateKey(shop));
+  push(shopCreatedDateKey(shop));
+  return dates.slice(0, 3).join(', ');
+}
+
+function exportShopInfo(shop) {
+  return normalizeTrafficNotes(shop).map((n) => n.text).join('\n');
+}
+
+function exportPopupNotes(shop) {
+  return normalizePopupNotes(shop)
+    .slice(0, MAX_POPUP_NOTES)
+    .map((n) => {
+      const date = formatCsvVisitDate(n.date);
+      const body = formatPopupNoteText(n);
+      return date ? `${date}\n${body}` : body;
+    })
+    .join('\n\n');
+}
+
+function shopToCsvRow(shop, personName) {
+  return [
+    personName || '',
+    shop.name || '',
+    shop.address || '',
+    shop.shop_type || 'smoke shop',
+    exportVisitDateCell(shop),
+    exportStoreCount(shop),
+    shop.tier || '',
+    shop.owner_name || shop.staff_contact || '',
+    shop.phone || '',
+    exportSellStatus(shop),
+    exportCooperation(shop),
+    exportShopInfo(shop),
+    isPlaced(shop, 'sample') ? '是' : '否',
+    isPlaced(shop, 'test_case') ? '试抽盒' : '否',
+    shop.distributor || '',
+    exportPopupNotes(shop),
+  ];
+}
+
+function buildShopsCsv(shopList, personName) {
+  const lines = [
+    CSV_EXPORT_HEADERS.map(csvEscape).join(','),
+    ...shopList.map((shop) => shopToCsvRow(shop, personName).map(csvEscape).join(',')),
+  ];
+  return `${lines.join('\r\n')}\r\n`;
+}
+
+function sanitizeFilename(name) {
+  return String(name || 'export').replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, ' ').trim() || 'export';
+}
+
+function downloadTextFile(filename, content) {
+  const blob = new Blob(['\uFEFF', content], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function shopsForCsvExport(shopList, ownerId, dateKey) {
+  const pool = shopList.filter((s) => (s.assigned_to || '') === ownerId);
+  const matched = dateKey
+    ? pool.filter((s) => shopVisitedInRange(s, dateKey, dateKey))
+    : pool;
+  return sortShops(matched, 'updated_at');
 }
 
 function sortShops(list, sortBy) {
@@ -956,6 +1205,9 @@ export default function App() {
   const [accountOpen, setAccountOpen] = useState(false);
   const [dailyReportOpen, setDailyReportOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportMode, setExportMode] = useState('today');
+  const [exportDate, setExportDate] = useState(() => todayDateKey());
   const [needsRegion, setNeedsRegion] = useState(false);
 
   useEffect(() => {
@@ -1092,11 +1344,15 @@ export default function App() {
 
   async function openShop(shop) {
     const notes = normalizeTrafficNotes(shop);
+    const popups = normalizePopupNotes(shop);
+    const todayPopup = todayPopupEntry(popups);
     const today = todayDateKey();
     setSelected(shop.id);
     setDraft({
       ...shop,
       chain_total_stores: shop.chain_total_stores ?? '',
+      chain_a_plus_count: shop.chain_a_plus_count ?? '',
+      is_chain: Boolean(shop.is_chain),
       next_plan_date: shop.next_plan_date || '',
       next_plan_time: shop.next_plan_time || '',
       starred: Boolean(shop.starred),
@@ -1108,6 +1364,11 @@ export default function App() {
       sample_today: placedToday(shop, 'sample', today),
       traffic_notes: notes,
       traffic_note: todayNoteText(notes),
+      popup_notes: popups,
+      popup_date: today,
+      popup_flow: todayPopup.flow,
+      popup_vape_buyers: todayPopup.vape_buyers,
+      popup_vozol_buyers: todayPopup.vozol_buyers,
       units_log: normalizeUnitsLog(shop),
       units_today: todayUnitsValue(normalizeUnitsLog(shop), today),
     });
@@ -1145,22 +1406,43 @@ export default function App() {
 
   async function saveShop() {
     if (!draft.name.trim() || saving) return;
+    const chainStores = Number(draft.chain_total_stores);
+    const chainAPlus = Number(draft.chain_a_plus_count);
+    if (draft.is_chain) {
+      if (!Number.isFinite(chainStores) || chainStores < CHAIN_MIN_STORES) {
+        alert(`连锁店至少 ${CHAIN_MIN_STORES} 家`);
+        return;
+      }
+      if (!Number.isFinite(chainAPlus) || chainAPlus < 0 || chainAPlus > chainStores) {
+        alert('A 级店铺数量需在 0 到连锁店总数之间');
+        return;
+      }
+    }
     const nextPlanText = formatNextPlan(draft);
     const prevShop = selected === 'new' ? draft : (shops.find((s) => s.id === selected) || draft);
     const existingNotes = normalizeTrafficNotes(prevShop);
     const nextNotes = serializeTrafficNotes(mergeTrafficNotes(existingNotes, draft.traffic_note));
+    const existingPopups = normalizePopupNotes(prevShop);
+    const nextPopups = serializePopupNotes(mergePopupNotes(existingPopups, {
+      flow: draft.popup_flow,
+      vape_buyers: draft.popup_vape_buyers,
+      vozol_buyers: draft.popup_vozol_buyers,
+    }, draft.popup_date || todayDateKey()));
     const testNext = nextPlacement(prevShop, draft.test_case_today, 'test_case');
     const sampleNext = nextPlacement(prevShop, draft.sample_today, 'sample');
     const nextUnitsLog = mergeUnitsLog(normalizeUnitsLog(prevShop), draft.units_today);
     const payload = withoutUndefined({
       ...draft,
       name: draft.name.trim(),
-      chain_total_stores: draft.chain_total_stores === '' ? null : Number(draft.chain_total_stores),
+      is_chain: Boolean(draft.is_chain),
+      chain_total_stores: draft.is_chain ? chainStores : null,
+      chain_a_plus_count: draft.is_chain ? chainAPlus : null,
       next_plan_date: draft.next_plan_date || '',
       next_plan_time: draft.next_plan_date ? (draft.next_plan_time || '') : '',
       next_plan: nextPlanText,
       traffic_notes: nextNotes,
       traffic_note: nextNotes[0]?.text || '',
+      popup_notes: nextPopups,
       units_log: nextUnitsLog,
       test_case_placed: testNext.placed,
       test_case_placed_on: testNext.on,
@@ -1173,6 +1455,10 @@ export default function App() {
     delete payload.test_case_today;
     delete payload.sample_today;
     delete payload.units_today;
+    delete payload.popup_flow;
+    delete payload.popup_vape_buyers;
+    delete payload.popup_vozol_buyers;
+    delete payload.popup_date;
     setSaving(true);
     try {
       const geoQuery = geocodeQuery(payload);
@@ -1265,6 +1551,9 @@ export default function App() {
     const lines = [
       ['店铺名称', draft.name],
       ['城市', draft.city],
+      ['是否连锁店', draft.is_chain ? '是' : '否'],
+      ['连锁店数量', draft.is_chain ? draft.chain_total_stores : ''],
+      ['其中 A 级店铺', draft.is_chain ? draft.chain_a_plus_count : ''],
       ['地址', draft.address],
       ['评级', draft.tier || '未分级'],
       ['拜访状态', STATUS[draft.status] || draft.status],
@@ -1278,6 +1567,11 @@ export default function App() {
       ['今日卖进数量', draft.units_today || ''],
       ['热卖品牌明细', draft.brands_note],
       ['备注', draft.traffic_note],
+      ['POP UP 情况', formatPopupNoteText({
+        flow: draft.popup_flow,
+        vape_buyers: draft.popup_vape_buyers,
+        vozol_buyers: draft.popup_vozol_buyers,
+      })],
       ['下次拜访计划', formatNextPlan(draft)],
     ]
       .map(([label, value]) => {
@@ -1353,6 +1647,14 @@ export default function App() {
     () => members.find((m) => m.id === focusedMemberId) || null,
     [members, focusedMemberId],
   );
+  const exportOwner = profile?.role === 'manager' ? focusedMember : profile;
+  const showExport = Boolean(exportOwner) && (profile?.role !== 'manager' || view === 'list');
+  const exportDateKey = exportMode === 'all' ? '' : (exportMode === 'date' ? exportDate : todayDateKey());
+  const exportShopList = useMemo(() => {
+    if (!exportOwner?.id) return [];
+    if (exportMode === 'date' && !exportDate) return [];
+    return shopsForCsvExport(shops, exportOwner.id, exportDateKey);
+  }, [shops, exportOwner, exportDateKey, exportMode, exportDate]);
 
   const teamCities = useMemo(() => {
     const teamId = normalizeTeamId(profile?.role === 'manager' ? focusedMember?.team_id : profile?.team_id);
@@ -1423,6 +1725,21 @@ export default function App() {
     profile?.role === 'manager' && fAssignee !== 'all',
   ].filter(Boolean).length;
 
+  function openExport() {
+    setExportMode('today');
+    setExportDate(todayDateKey());
+    setExportOpen(true);
+  }
+
+  function confirmExport() {
+    if (!exportOwner?.id) return;
+    const person = memberName(exportOwner);
+    const stamp = exportDateKey || '全部';
+    const filename = `${sanitizeFilename(person)}_${stamp}.csv`;
+    downloadTextFile(filename, buildShopsCsv(exportShopList, person));
+    setExportOpen(false);
+  }
+
   const filterBar = (
     <section className="filters">
       <button
@@ -1433,9 +1750,16 @@ export default function App() {
         <SlidersHorizontal size={15} />
         筛选{activeFilterCount ? ` · ${activeFilterCount}` : ''}
       </button>
-      <button className="primary add-shop" type="button" onClick={openNew}>
-        <Plus size={15} />添加店铺
-      </button>
+      <div className="filters-actions">
+        {showExport && (
+          <button type="button" className="export-csv" onClick={openExport}>
+            <Download size={15} />导出 CSV
+          </button>
+        )}
+        <button className="primary add-shop" type="button" onClick={openNew}>
+          <Plus size={15} />添加店铺
+        </button>
+      </div>
     </section>
   );
 
@@ -1497,6 +1821,9 @@ export default function App() {
               <div className="card-tags">
                 <span className="chip">{s.tier || '未分级'}</span>
                 <span className="chip">{STATUS[s.status]}</span>
+                {isChainShop(s) && (
+                  <span className="chip">连锁 {s.chain_total_stores} 家{Number(s.chain_a_plus_count) ? ` · A级 ${s.chain_a_plus_count}` : ''}</span>
+                )}
               </div>
             </div>
             <div className="meta">
@@ -1520,6 +1847,12 @@ export default function App() {
               <p className="remark" key={`${n.date}-${i}`}>
                 {formatNoteStamp(n) && <span className="remark-time">{formatNoteStamp(n)}</span>}
                 {n.text}
+              </p>
+            ))}
+            {normalizePopupNotes(s).map((n, i) => (
+              <p className="remark popup-remark" key={`popup-${n.date}-${i}`}>
+                {formatNoteStamp(n) && <span className="remark-time">{formatNoteStamp(n)} · POP UP</span>}
+                {formatPopupNoteText(n)}
               </p>
             ))}
             {s.brands_note && <p>{s.brands_note}</p>}
@@ -1766,6 +2099,46 @@ export default function App() {
                   {CITIES.map((c) => <option key={c}>{c}</option>)}
                 </select>
               </Field>
+              <div className="field wide">
+                <span>是否连锁店</span>
+                <CircleChoice
+                  value={Boolean(draft.is_chain)}
+                  onChange={(yes) => setDraft({
+                    ...draft,
+                    is_chain: yes,
+                    chain_total_stores: yes
+                      ? (draft.chain_total_stores === '' || draft.chain_total_stores == null ? String(CHAIN_MIN_STORES) : draft.chain_total_stores)
+                      : draft.chain_total_stores,
+                    chain_a_plus_count: yes
+                      ? (draft.chain_a_plus_count === '' || draft.chain_a_plus_count == null ? '0' : draft.chain_a_plus_count)
+                      : draft.chain_a_plus_count,
+                  })}
+                />
+              </div>
+              {draft.is_chain && (
+                <>
+                  <Field label={`连锁店数量（至少 ${CHAIN_MIN_STORES} 家）`}>
+                    <input
+                      type="number"
+                      min={CHAIN_MIN_STORES}
+                      step="1"
+                      placeholder={`至少 ${CHAIN_MIN_STORES} 家`}
+                      value={draft.chain_total_stores}
+                      onChange={(e) => setDraft({ ...draft, chain_total_stores: e.target.value })}
+                    />
+                  </Field>
+                  <Field label="其中 A 级店铺">
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      placeholder="A / A+ / S 有几家"
+                      value={draft.chain_a_plus_count}
+                      onChange={(e) => setDraft({ ...draft, chain_a_plus_count: e.target.value })}
+                    />
+                  </Field>
+                </>
+              )}
               <Field wide label="地址"><input value={draft.address} onChange={(e) => setDraft({ ...draft, address: e.target.value })} /></Field>
               <Field label="评级">
                 <select value={draft.tier} onChange={(e) => setDraft({ ...draft, tier: e.target.value })}>
@@ -1837,6 +2210,28 @@ export default function App() {
                   onChange={(e) => setDraft({ ...draft, traffic_note: e.target.value })}
                 />
               </div>
+              <div className="field wide popup-field">
+                <div className="popup-head">
+                  <span>Pop up</span>
+                  <input
+                    type="date"
+                    value={draft.popup_date || todayDateKey()}
+                    onChange={(e) => setDraft(applyPopupDate(draft, e.target.value))}
+                    aria-label="Pop up 日期"
+                  />
+                </div>
+                <div className="popup-grid">
+                  {POPUP_FIELDS.map((field) => (
+                    <label key={field.key}>
+                      {field.label}
+                      <input
+                        value={draft[field.draftKey] || ''}
+                        onChange={(e) => setDraft({ ...draft, [field.draftKey]: e.target.value })}
+                      />
+                    </label>
+                  ))}
+                </div>
+              </div>
               <div className="field">
                 <span>下次拜访日期（可选）</span>
                 <div className="date-row">
@@ -1887,15 +2282,21 @@ export default function App() {
               </Field>
             </div>
             <div className="visitbox">
-              <h3>门店信息文本</h3>
-              <button type="button" onClick={buildReport}><Clipboard size={14} />一键生成</button>
+              <div className="visitbox-head">
+                <h3>门店信息文本</h3>
+                <button type="button" className="visitbox-btn" onClick={buildReport}>
+                  <Clipboard size={14} />一键生成
+                </button>
+              </div>
               {reportText && (
-                <div style={{ marginTop: 10 }}>
-                  <textarea readOnly value={reportText} style={{ minHeight: 160, whiteSpace: 'pre-wrap' }} />
-                  <button type="button" style={{ marginTop: 8 }} onClick={copyReport}>
-                    <Copy size={14} />{copied ? '已复制' : '复制文本'}
-                  </button>
-                </div>
+                <>
+                  <textarea className="visitbox-text" readOnly value={reportText} />
+                  <div className="visitbox-actions">
+                    <button type="button" className="visitbox-btn" onClick={copyReport}>
+                      <Copy size={14} />{copied ? '已复制' : '复制文本'}
+                    </button>
+                  </div>
+                </>
               )}
             </div>
             <footer>
@@ -2025,6 +2426,63 @@ export default function App() {
                 </button>
               )}
             </div>
+          </div>
+        </div>
+      )}
+      {exportOpen && (
+        <div className="modal" onMouseDown={() => setExportOpen(false)}>
+          <div className="editor export-editor" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="editorhead">
+              <h2>导出 CSV</h2>
+              <button type="button" onClick={() => setExportOpen(false)}><X size={18} /></button>
+            </div>
+            <p className="export-hint">
+              导出 {memberName(exportOwner) || '当前销售'} 的门店数据
+            </p>
+            <div className="export-modes" role="radiogroup" aria-label="导出范围">
+              {[
+                { id: 'today', label: '今天' },
+                { id: 'all', label: '全部数据' },
+                { id: 'date', label: '指定日期' },
+              ].map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={exportMode === opt.id}
+                  className={exportMode === opt.id ? 'on' : ''}
+                  onClick={() => setExportMode(opt.id)}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            {exportMode === 'date' && (
+              <label className="export-date">
+                日期
+                <input
+                  type="date"
+                  value={exportDate}
+                  onChange={(e) => setExportDate(e.target.value)}
+                />
+              </label>
+            )}
+            <p className="export-count">
+              {exportMode === 'date' && !exportDate
+                ? '请选择日期'
+                : `将导出 ${exportShopList.length} 家店铺`}
+            </p>
+            <footer>
+              <button type="button" onClick={() => setExportOpen(false)}>取消</button>
+              <button
+                className="primary"
+                type="button"
+                disabled={!exportShopList.length}
+                onClick={confirmExport}
+              >
+                <Download size={15} />导出
+              </button>
+            </footer>
           </div>
         </div>
       )}
@@ -2330,6 +2788,29 @@ function PasswordField({ value, onChange, autoComplete, minLength, required }) {
 
 function Field({ label, children, wide }) {
   return <label className={wide ? 'field wide' : 'field'}><span>{label}</span>{children}</label>;
+}
+
+function CircleChoice({ value, onChange }) {
+  return (
+    <div className="circle-choice" role="radiogroup">
+      {[
+        { yes: true, label: '是' },
+        { yes: false, label: '否' },
+      ].map((opt) => (
+        <button
+          type="button"
+          key={opt.label}
+          role="radio"
+          aria-checked={value === opt.yes}
+          className={value === opt.yes ? 'on' : ''}
+          onClick={() => onChange(opt.yes)}
+        >
+          <span className="circle-dot" aria-hidden="true" />
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 function PlacementField({ label, kind, draft, onChange }) {

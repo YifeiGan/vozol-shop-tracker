@@ -436,6 +436,7 @@ code { font-size: 12.5px; }
   gap: 8px;
   margin-bottom: 12px;
   flex-shrink: 0;
+  flex-wrap: wrap;
 }
 .filter-launch {
   border: 1px solid transparent;
@@ -454,9 +455,71 @@ code { font-size: 12.5px; }
   background: #efe8d8;
   color: var(--navy);
 }
+.filters-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.filters .export-csv {
+  border: 1px solid transparent;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  border-radius: 10px;
+  padding: 9px 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+}
 .filters .add-shop {
   flex-shrink: 0;
   white-space: nowrap;
+}
+.export-editor {
+  width: min(440px, 100%);
+}
+.export-hint,
+.export-count {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.export-modes {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.export-modes button {
+  flex: 1;
+  border: 1px solid transparent;
+  background: var(--fill);
+  border-radius: 10px;
+  padding: 9px 8px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.export-modes button.on {
+  background: #efe8d8;
+  color: var(--navy);
+}
+.export-date {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.export-date input {
+  width: 100%;
+}
+.editor footer button.primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 .filter-editor {
   width: min(560px, 100%);
@@ -866,7 +929,58 @@ code { font-size: 12.5px; }
   gap: 10px;
 }
 .field.wide { grid-column: 1 / -1; }
-.field span { display: block; margin-bottom: 4px; }
+.field > span { display: block; margin-bottom: 4px; }
+.circle-choice {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  margin-top: 6px;
+  line-height: 1;
+}
+.circle-choice button {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 400;
+  line-height: 1;
+  color: var(--ink);
+}
+.circle-choice button:hover {
+  color: var(--navy);
+}
+.circle-choice button.on {
+  color: var(--navy);
+}
+.circle-choice .circle-dot {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  border-radius: 50%;
+  border: 2px solid #8c887e;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  background: transparent;
+}
+.circle-choice .circle-dot::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: transparent;
+}
+.circle-choice button.on .circle-dot {
+  border-color: var(--navy);
+}
+.circle-choice button.on .circle-dot::after {
+  background: var(--navy);
+}
 .note-history {
   margin-top: 6px;
   display: flex;
@@ -897,6 +1011,36 @@ code { font-size: 12.5px; }
   margin-top: 10px;
   font-size: 12px;
   color: var(--muted);
+}
+.popup-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.popup-head > span {
+  margin: 0;
+}
+.popup-head input[type="date"] {
+  width: auto;
+  min-width: 10.5rem;
+  margin: 0;
+  flex: 0 0 auto;
+}
+.popup-grid {
+  display: grid;
+  gap: 8px;
+}
+.popup-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.card p.popup-remark {
+  color: var(--ink);
 }
 .field.wide .note-today-hint + textarea,
 .field.wide .note-history + textarea {
@@ -953,9 +1097,42 @@ code { font-size: 12.5px; }
   border-radius: 12px;
   padding: 12px;
   margin: 14px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
-.visitbox h3 { margin: 0 0 10px; font-size: 16px; }
+.visitbox-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.visitbox h3 { margin: 0; font-size: 16px; }
 .visitbox h3 small { color: var(--muted); font-weight: 400; }
+.visitbox button.visitbox-btn {
+  border: 1px solid transparent;
+  background: var(--surface);
+  border-radius: 10px;
+  padding: 7px 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  box-shadow: var(--shadow);
+  flex-shrink: 0;
+}
+.visitbox-text {
+  width: 100%;
+  min-height: 160px;
+  margin: 0;
+  resize: vertical;
+  white-space: pre-wrap;
+  background: var(--surface);
+}
+.visitbox-actions {
+  display: flex;
+  justify-content: flex-end;
+}
 .visitform {
   display: grid;
   grid-template-columns: 1fr 1fr;
