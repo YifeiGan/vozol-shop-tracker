@@ -62,16 +62,15 @@ service cloud.firestore {
         allow create: if hasProfile()
           && request.resource.data.assigned_to == userId
           && (
-            (request.auth.uid == userId && request.resource.data.team_id == me().team_id)
-            || isManager()
+            isManager()
+            || (
+              request.auth.uid == userId
+              && request.resource.data.team_id is string
+            )
           );
 
         allow update: if canAccessOwnedShop(userId)
-          && request.resource.data.assigned_to == userId
-          && (
-            request.resource.data.team_id == resource.data.team_id
-            || isManager()
-          );
+          && request.resource.data.assigned_to == userId;
 
         allow delete: if isManager();
 

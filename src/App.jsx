@@ -28,7 +28,7 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import { auth, configured, db, googleProvider } from './firebase';
-import { geocodeAddress, geocodeQuery, GEOCODE_VERSION, needsGeocode, shopHasCoords } from './geocode';
+import { detectCityFromAddress, geocodeAddress, geocodeQuery, GEOCODE_VERSION, needsGeocode, shopHasCoords } from './geocode';
 
 const ShopMap = React.lazy(() => import('./ShopMap'));
 
@@ -56,8 +56,7 @@ function normalizeTeamId(value) {
   return '';
 }
 const STATUS = {
-  not_visited: '待拜访',
-  visited: '已卖进/拜访',
+  visited: '已卖进',
   follow_up: '需跟进',
   no_interest: '无意向/暂缓',
 };
@@ -65,9 +64,16 @@ function defaultCity(teamId) {
   return normalizeTeamId(teamId) === 'tampa' ? 'Clearwater' : 'Orlando';
 }
 
+function teamCityPool(teamId) {
+  const id = normalizeTeamId(teamId);
+  if (id === 'tampa') return TAMPA_CITIES;
+  if (id === 'orlando') return ORLANDO_CITIES;
+  return CITIES;
+}
+
 function emptyShop(teamId) {
   return {
-    name: '', address: '', city: defaultCity(teamId), phone: '', tier: '', status: 'not_visited',
+    name: '', address: '', city: '', phone: '', tier: '', status: 'not_visited',
     is_chain: false, chain_name: '', chain_total_stores: '', chain_a_plus_count: '', staff_contact: '', owner_name: '',
     owner_schedule: '', contact_role: '', store_number: '', restock_status: '', distributor: '',
     test_case_placed: false, sample_placed: false, test_case_placed_on: '', sample_placed_on: '',
@@ -124,7 +130,6 @@ const COOPERATION = {
   sold_in: '已卖进',
   follow_up: '需跟进',
   no_interest: '无意向',
-  not_visited: '待拜访',
 };
 
 const MIN_PASSWORD_LENGTH = 8;
@@ -420,8 +425,52 @@ function localDateKeyFromTimestamp(value) {
   return '';
 }
 
+function isTierS(tier) {
+  return tier === 'S';
+}
+
+function isTierAAPlus(tier) {
+  return tier === 'A+' || tier === 'A';
+}
+
+function filterShopsByTier(shopList, tierFilter) {
+  if (tierFilter === 'S') return shopList.filter((s) => isTierS(s.tier));
+  if (tierFilter === 'aa') return shopList.filter((s) => isTierAAPlus(s.tier));
+  return shopList;
+}
+
+function popupSessionsInRange(shop, start, end) {
+  return normalizePopupNotes(shop)
+    .filter((n) => popupHasContent(n) && isDateInRange(n.date, start, end))
+    .length;
+}
+
+function popupVozolSalesInRange(shop, start, end) {
+  return normalizePopupNotes(shop)
+    .filter((n) => isDateInRange(n.date, start, end))
+    .reduce((sum, n) => sum + (Number(n.vozol_buyers) || 0), 0);
+}
+
+function computeTierMetrics(shopList, start, end) {
+  return {
+    storeCount: shopList.length,
+    totalUnits: shopList.reduce((sum, s) => sum + unitsInRange(s, start, end), 0),
+    testCaseCount: shopList.filter((s) => placementInRange(s, 'test_case', start, end)).length,
+    sampleCount: shopList.filter((s) => placementInRange(s, 'sample', start, end)).length,
+    popupSessions: shopList.reduce((sum, s) => sum + popupSessionsInRange(s, start, end), 0),
+    popupVozolSales: shopList.reduce((sum, s) => sum + popupVozolSalesInRange(s, start, end), 0),
+  };
+}
+
+function computeTierBreakdown(shopList, start, end) {
+  return {
+    s: computeTierMetrics(shopList.filter((s) => isTierS(s.tier)), start, end),
+    aa: computeTierMetrics(shopList.filter((s) => isTierAAPlus(s.tier)), start, end),
+  };
+}
+
 function isTierAPlus(tier) {
-  return tier === 'S' || tier === 'A+' || tier === 'A';
+  return isTierS(tier) || isTierAAPlus(tier);
 }
 
 function isChainShop(shop) {
@@ -473,9 +522,18 @@ function unitsInRange(shop, start, end) {
     .reduce((sum, e) => sum + e.units, 0);
 }
 
+function shopActiveInRange(shop, start, end) {
+  if (isDateInRange(shopCreatedDateKey(shop), start, end)) return true;
+  if (normalizeTrafficNotes(shop).some((n) => n.text && isDateInRange(n.date, start, end))) return true;
+  if (normalizePopupNotes(shop).some((n) => popupHasContent(n) && isDateInRange(n.date, start, end))) return true;
+  if (normalizeUnitsLog(shop).some((e) => isDateInRange(e.date, start, end))) return true;
+  if (isDateInRange(placementOn(shop, 'sample'), start, end)) return true;
+  if (isDateInRange(placementOn(shop, 'test_case'), start, end)) return true;
+  return false;
+}
+
 function shopVisitedInRange(shop, start, end) {
-  if (isDateInRange(shopUpdatedDateKey(shop), start, end)) return true;
-  return normalizeTrafficNotes(shop).some((n) => isDateInRange(n.date, start, end));
+  return shopActiveInRange(shop, start, end);
 }
 
 function placementInRange(shop, kind, start, end) {
@@ -490,20 +548,28 @@ function matchesCooperationFilter(status, filter) {
   return status === filter;
 }
 
-function computeAreaMetrics(shopList, start, end) {
+function mappingTargetFor(headcount) {
+  return Math.max(0, Number(headcount) || 0) * MAPPING_TARGET;
+}
+
+function computeAreaMetrics(shopList, start, end, headcount = 1) {
   const total = shopList.length;
   const visitedCount = shopList.filter((s) => shopVisitedInRange(s, start, end)).length;
   const mappedCount = visitedCount;
+  const mappingTarget = mappingTargetFor(headcount);
   const aPlusCount = shopList.filter((s) => isTierAPlus(s.tier)).length;
   const soldInCount = shopList.filter((s) => s.status === 'visited').length;
   const sampleCount = shopList.filter((s) => placementInRange(s, 'sample', start, end)).length;
   const testCaseCount = shopList.filter((s) => placementInRange(s, 'test_case', start, end)).length;
   const totalUnits = shopList.reduce((sum, s) => sum + unitsInRange(s, start, end), 0);
+  const popupSessions = shopList.reduce((sum, s) => sum + popupSessionsInRange(s, start, end), 0);
+  const popupVozolSales = shopList.reduce((sum, s) => sum + popupVozolSalesInRange(s, start, end), 0);
   return {
     total,
     visitedCount,
     mappedCount,
-    mappedPct: pct(mappedCount, MAPPING_TARGET),
+    mappingTarget,
+    mappedPct: pct(mappedCount, mappingTarget),
     aPlusCount,
     aPlusPct: pct(aPlusCount, total),
     sampleCount,
@@ -511,6 +577,8 @@ function computeAreaMetrics(shopList, start, end) {
     soldInCount,
     soldInPct: pct(soldInCount, total),
     totalUnits,
+    popupSessions,
+    popupVozolSales,
   };
 }
 
@@ -532,10 +600,7 @@ function shopTeamOf(shop, members) {
 
 function todayTouchedCount(shopList) {
   const today = todayDateKey();
-  return shopList.filter((s) => (
-    shopUpdatedDateKey(s) === today
-    || normalizeTrafficNotes(s).some((n) => n.date === today)
-  )).length;
+  return shopList.filter((s) => shopActiveInRange(s, today, today)).length;
 }
 
 function groupMembersByTeam(members) {
@@ -568,20 +633,25 @@ function applyShopFilters(list, { search, fTier, fStatus, fStarred, fCity, fSamp
     if (fTestCase === 'yes' && !isPlaced(s, 'test_case')) return false;
     if (fTestCase === 'no' && isPlaced(s, 'test_case')) return false;
     if (fAssignee !== 'all' && (s.assigned_to || '') !== fAssignee) return false;
-    if (q && ![s.name, s.address, s.city, s.owner_name, s.staff_contact].some((v) => (v || '').toLowerCase().includes(q))) return false;
+    if (q && ![s.name, s.address, s.city, s.owner_name, s.phone, s.staff_contact].some((v) => (v || '').toLowerCase().includes(q))) return false;
     return true;
   });
 }
 
+function hasTrafficNoteOn(shop, dateKey) {
+  return normalizeTrafficNotes(shop).some((n) => n.date === dateKey && n.text);
+}
+
 function buildDailyReportText(shopList) {
   const today = todayDateKey();
-  const todayShops = shopList.filter((s) => shopUpdatedDateKey(s) === today);
-  const newShops = todayShops.filter((s) => isNewVisitToday(s, today));
-  const revisitShops = todayShops.filter((s) => !isNewVisitToday(s, today));
+  const newShops = shopList.filter((s) => isNewVisitToday(s, today));
+  const revisitShops = shopList.filter((s) => (
+    !isNewVisitToday(s, today) && hasTrafficNoteOn(s, today)
+  ));
   const newAPlusCount = newShops.filter((s) => isTierAPlus(s.tier)).length;
-  const testCaseCount = todayShops.filter((s) => placedToday(s, 'test_case', today)).length;
-  const sampleCount = todayShops.filter((s) => placedToday(s, 'sample', today)).length;
-  const totalUnits = todayShops.reduce((sum, s) => sum + unitsInRange(s, today, today), 0);
+  const testCaseCount = shopList.filter((s) => placedToday(s, 'test_case', today)).length;
+  const sampleCount = shopList.filter((s) => placedToday(s, 'sample', today)).length;
+  const totalUnits = shopList.reduce((sum, s) => sum + unitsInRange(s, today, today), 0);
   return [
     `日期：${today}`,
     `新店：${newShops.length}`,
@@ -645,11 +715,17 @@ function exportSellStatus(shop) {
   return SELL_STATUS_CSV[shop?.status] || '';
 }
 
-function exportCooperation(shop) {
-  if (shop?.status === 'no_interest') return '低';
-  if (shop?.starred) return '极高';
+function cooperationLevel(shop) {
+  const restock = String(shop?.restock_status || '').trim();
+  if (shop?.status === 'no_interest' || restock === '拒绝') return '低';
+  if (shop?.status === 'visited' || restock === '已卖进') return '极高';
   if (isPlaced(shop, 'test_case')) return '高';
+  if (isPlaced(shop, 'sample')) return '中';
   return '中';
+}
+
+function exportCooperation(shop) {
+  return cooperationLevel(shop);
 }
 
 function exportVisitDateCell(shop) {
@@ -688,7 +764,7 @@ function shopToCsvRow(shop, personName) {
     exportVisitDateCell(shop),
     exportStoreCount(shop),
     shop.tier || '',
-    shop.owner_name || shop.staff_contact || '',
+    shop.owner_name || '',
     shop.phone || '',
     exportSellStatus(shop),
     exportCooperation(shop),
@@ -722,14 +798,6 @@ function downloadTextFile(filename, content) {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
-}
-
-function shopsForCsvExport(shopList, ownerId, dateKey) {
-  const pool = shopList.filter((s) => (s.assigned_to || '') === ownerId);
-  const matched = dateKey
-    ? pool.filter((s) => shopVisitedInRange(s, dateKey, dateKey))
-    : pool;
-  return sortShops(matched, 'updated_at');
 }
 
 function sortShops(list, sortBy) {
@@ -791,8 +859,14 @@ function shopDoc(userId, shopId) {
 
 function shopFromSnap(item) {
   const data = item.data();
-  const ownerId = item.ref.parent?.parent?.id || data.assigned_to;
-  return { id: item.id, ...data, assigned_to: data.assigned_to || ownerId };
+  const pathOwner = item.ref.parent?.parent?.id || data.assigned_to;
+  return {
+    id: item.id,
+    ...data,
+    path_owner: pathOwner,
+    assigned_to: pathOwner || data.assigned_to,
+    team_id: normalizeTeamId(data.team_id) || String(data.team_id || '').trim(),
+  };
 }
 
 let pendingSignupName = '';
@@ -818,7 +892,7 @@ async function ensureProfile(user) {
   } catch {
     snap = null;
   }
-  if (snap?.exists()) return { id: snap.id, ...snap.data() };
+  if (snap?.exists()) return { ...snap.data(), id: snap.id };
 
   if (!teamId) return { needsRegion: true };
 
@@ -1192,6 +1266,7 @@ export default function App() {
   const [focusedMemberId, setFocusedMemberId] = useState('');
   const [dashFrom, setDashFrom] = useState(() => monthStartKey());
   const [dashTo, setDashTo] = useState(() => todayDateKey());
+  const [dashTierFilter, setDashTierFilter] = useState('all');
   const [dailyReportText, setDailyReportText] = useState('');
   const [dailyCopied, setDailyCopied] = useState(false);
   const [selected, setSelected] = useState(null);
@@ -1278,17 +1353,22 @@ export default function App() {
         setGeocodeNote(`正在按地址重新定位 ${pending.length} 家…`);
         const shop = pending[0];
         const queryText = geocodeQuery(shop);
+        const { pool, fallback } = resolveCityContext(shop);
+        const detectedCity = detectCityFromAddress(shop.address, { fallback, knownCities: pool });
         let coords = null;
         try {
-          coords = await geocodeAddress(queryText, shop);
+          coords = await geocodeAddress(queryText, shop, { knownCities: pool });
         } catch {
           coords = null;
         }
         if (cancelled) return;
+        const resolvedCity = coords?.city || detectedCity;
+        const cityPatch = resolvedCity && resolvedCity !== shop.city ? { city: resolvedCity } : {};
         const patch = coords
           ? {
             lat: coords.lat,
             lng: coords.lng,
+            ...cityPatch,
             geocode_query: queryText,
             geocode_failed: false,
             geocode_version: GEOCODE_VERSION,
@@ -1296,13 +1376,14 @@ export default function App() {
           : {
             lat: null,
             lng: null,
+            ...cityPatch,
             geocode_query: queryText,
             geocode_failed: true,
             geocode_version: GEOCODE_VERSION,
           };
         try {
-          if (shop.assigned_to) {
-            await updateDoc(shopDoc(shop.assigned_to, shop.id), patch);
+          if (shop.path_owner || shop.assigned_to) {
+            await updateDoc(shopDoc(shop.path_owner || shop.assigned_to, shop.id), patch);
           }
         } catch {
           // still cache locally so this session does not retry forever
@@ -1348,7 +1429,7 @@ export default function App() {
     const todayPopup = todayPopupEntry(popups);
     const today = todayDateKey();
     setSelected(shop.id);
-    setDraft({
+    setDraft(applyAddressToDraft({
       ...shop,
       chain_total_stores: shop.chain_total_stores ?? '',
       chain_a_plus_count: shop.chain_a_plus_count ?? '',
@@ -1371,7 +1452,7 @@ export default function App() {
       popup_vozol_buyers: todayPopup.vozol_buyers,
       units_log: normalizeUnitsLog(shop),
       units_today: todayUnitsValue(normalizeUnitsLog(shop), today),
-    });
+    }, shop.address || ''));
     setReportText('');
     setCopied(false);
   }
@@ -1380,7 +1461,7 @@ export default function App() {
     e?.stopPropagation?.();
     const next = !shop.starred;
     try {
-      await updateDoc(shopDoc(shop.assigned_to || profile.id, shop.id), {
+      await updateDoc(shopDoc(shop.path_owner || shop.assigned_to || profile.id, shop.id), {
         starred: next,
         updated_at: serverTimestamp(),
       });
@@ -1391,12 +1472,30 @@ export default function App() {
     }
   }
 
+  function resolveCityContext(draftLike) {
+    let teamId = profile?.team_id;
+    if (profile?.role === 'manager') {
+      const assignee = draftLike?.assigned_to || focusedMemberId || profile.id;
+      const member = members.find((m) => m.id === assignee);
+      if (member?.team_id) teamId = member.team_id;
+    }
+    return {
+      pool: teamCityPool(teamId),
+      fallback: defaultCity(teamId),
+    };
+  }
+
+  function applyAddressToDraft(draftLike, address) {
+    const { pool, fallback } = resolveCityContext(draftLike);
+    const city = detectCityFromAddress(address, { fallback, knownCities: pool });
+    return { ...draftLike, address, city };
+  }
+
   function openNew() {
     const shop = emptyShop(profile?.team_id);
     if (profile?.role === 'manager') {
       const member = members.find((m) => m.id === (focusedMemberId || profile.id));
       shop.assigned_to = member?.id || profile.id;
-      shop.city = defaultCity(member?.team_id || profile.team_id);
     }
     setSelected('new');
     setDraft(shop);
@@ -1459,6 +1558,8 @@ export default function App() {
     delete payload.popup_vape_buyers;
     delete payload.popup_vozol_buyers;
     delete payload.popup_date;
+    const { pool, fallback } = resolveCityContext(payload);
+    payload.city = detectCityFromAddress(payload.address, { fallback, knownCities: pool });
     setSaving(true);
     try {
       const geoQuery = geocodeQuery(payload);
@@ -1470,36 +1571,45 @@ export default function App() {
         payload.geocode_failed = false;
         payload.geocode_version = GEOCODE_VERSION;
       } else if (selected === 'new' || geoQuery !== geocodeQuery(prevGeoShop || {}) || prevGeoShop?.geocode_version !== GEOCODE_VERSION) {
-        const coords = await geocodeAddress(geoQuery, payload);
+        const coords = await geocodeAddress(geoQuery, payload, { knownCities: pool });
         if (coords) {
           payload.lat = coords.lat;
           payload.lng = coords.lng;
+          if (coords.city) payload.city = coords.city;
           payload.geocode_query = geoQuery;
           payload.geocode_failed = false;
           payload.geocode_version = GEOCODE_VERSION;
         }
       }
-      const assigneeId = profile.role === 'manager' ? (draft.assigned_to || profile.id) : profile.id;
+      const isManagerUser = profile.role === 'manager';
+      const ownerId = user?.uid || profile.id;
+      const assigneeId = isManagerUser ? (draft.assigned_to || profile.id) : ownerId;
       const assigneeTeam = normalizeTeamId(members.find((m) => m.id === assigneeId)?.team_id)
         || normalizeTeamId(profile.team_id)
         || 'orlando';
       payload.assigned_to = assigneeId;
       payload.team_id = assigneeTeam;
       if (selected === 'new') {
-        const ref = await addDoc(shopsCollection(payload.assigned_to), {
+        const ref = await addDoc(shopsCollection(ownerId), {
           ...payload,
+          assigned_to: ownerId,
+          team_id: assigneeTeam,
           created_at: serverTimestamp(),
           updated_at: serverTimestamp(),
         });
-        setShops((prev) => [{ id: ref.id, ...payload, assigned_to: payload.assigned_to, team_id: payload.team_id, created_at: new Date(), updated_at: new Date() }, ...prev]);
+        setShops((prev) => [{ id: ref.id, ...payload, assigned_to: ownerId, team_id: assigneeTeam, path_owner: ownerId, created_at: new Date(), updated_at: new Date() }, ...prev]);
       } else {
         const current = shops.find((s) => s.id === selected);
-        const oldOwner = current?.assigned_to || profile.id;
-        const newOwner = payload.assigned_to || oldOwner;
+        const pathOwner = isManagerUser
+          ? (current?.path_owner || current?.assigned_to || profile.id)
+          : ownerId;
+        const newOwner = isManagerUser ? (payload.assigned_to || pathOwner) : ownerId;
         payload.assigned_to = newOwner;
-        payload.team_id = normalizeTeamId(members.find((m) => m.id === newOwner)?.team_id) || payload.team_id;
-        if (newOwner !== oldOwner) {
-          const oldRef = shopDoc(oldOwner, selected);
+        payload.team_id = isManagerUser
+          ? (normalizeTeamId(members.find((m) => m.id === newOwner)?.team_id) || normalizeTeamId(current?.team_id) || assigneeTeam)
+          : (normalizeTeamId(current?.team_id) || assigneeTeam);
+        if (isManagerUser && newOwner !== pathOwner) {
+          const oldRef = shopDoc(pathOwner, selected);
           const newRef = shopDoc(newOwner, selected);
           const visitsSnap = await getDocs(collection(oldRef, 'visits'));
           const batch = writeBatch(db);
@@ -1515,7 +1625,7 @@ export default function App() {
           batch.delete(oldRef);
           await batch.commit();
         } else {
-          await updateDoc(shopDoc(oldOwner, selected), {
+          await updateDoc(shopDoc(pathOwner, selected), {
             ...payload,
             updated_at: serverTimestamp(),
           });
@@ -1540,7 +1650,10 @@ export default function App() {
       setSelected(null);
       setDraft(null);
     } catch (error) {
-      alert(error.message);
+      const code = error?.code || '';
+      alert(code.includes('permission-denied')
+        ? '没有保存权限。请刷新后再试一次。'
+        : (error.message || '保存失败'));
     } finally {
       setSaving(false);
     }
@@ -1558,6 +1671,7 @@ export default function App() {
       ['评级', draft.tier || '未分级'],
       ['拜访状态', STATUS[draft.status] || draft.status],
       ['老板', draft.owner_name],
+      ['联系方式', draft.phone],
       ['店员', draft.staff_contact],
       ['老板到店规律', draft.owner_schedule],
       ['主要拿货二级批发商', draft.distributor],
@@ -1653,19 +1767,15 @@ export default function App() {
   const exportShopList = useMemo(() => {
     if (!exportOwner?.id) return [];
     if (exportMode === 'date' && !exportDate) return [];
-    return shopsForCsvExport(shops, exportOwner.id, exportDateKey);
-  }, [shops, exportOwner, exportDateKey, exportMode, exportDate]);
+    if (exportDateKey) {
+      return visibleShops.filter((s) => shopVisitedInRange(s, exportDateKey, exportDateKey));
+    }
+    return visibleShops;
+  }, [visibleShops, exportOwner, exportDateKey, exportMode, exportDate]);
 
-  const teamCities = useMemo(() => {
-    const teamId = normalizeTeamId(profile?.role === 'manager' ? focusedMember?.team_id : profile?.team_id);
-    const pool = teamId === 'tampa'
-      ? TAMPA_CITIES
-      : teamId === 'orlando'
-        ? ORLANDO_CITIES
-        : [...ORLANDO_CITIES, ...TAMPA_CITIES];
-    const fromShops = shops.map((s) => s.city).filter(Boolean);
-    return [...new Set([...pool, ...fromShops])].sort((a, b) => a.localeCompare(b));
-  }, [shops, profile?.team_id, profile?.role, focusedMember]);
+  const teamCities = useMemo(() => (
+    [...new Set(shops.map((s) => s.city).filter(Boolean))].sort((a, b) => a.localeCompare(b))
+  ), [shops]);
 
   const myShops = useMemo(() => {
     if (profile?.role === 'manager') return shops;
@@ -1680,16 +1790,23 @@ export default function App() {
     if (profile?.role === 'manager') {
       const sales = members.filter((m) => m.active && m.role !== 'manager');
       const regions = TEAM_ORDER.map((teamId) => {
-        const regionShops = shops.filter((s) => shopTeamOf(s, members) === teamId);
+        const allRegionShops = shops.filter((s) => shopTeamOf(s, members) === teamId);
+        const regionShops = filterShopsByTier(allRegionShops, dashTierFilter);
         const regionMembers = sales.filter((m) => normalizeTeamId(m.team_id) === teamId);
         return {
           teamId,
           label: TEAM_LABEL[teamId],
-          metrics: computeAreaMetrics(regionShops, start, end),
+          metrics: computeAreaMetrics(regionShops, start, end, regionMembers.length),
+          tierBreakdown: computeTierBreakdown(allRegionShops, start, end),
           rows: regionMembers.map((m) => ({
             id: m.id,
             name: memberName(m),
-            ...computeAreaMetrics(shops.filter((s) => s.assigned_to === m.id), start, end),
+            ...computeAreaMetrics(
+              filterShopsByTier(shops.filter((s) => s.assigned_to === m.id), dashTierFilter),
+              start,
+              end,
+              1,
+            ),
           })),
         };
       });
@@ -1698,7 +1815,7 @@ export default function App() {
 
     const mine = computeAreaMetrics(myShops, start, end);
     return { mine, regions: [] };
-  }, [shops, members, profile, myShops, dashFrom, dashTo]);
+  }, [shops, members, profile, myShops, dashFrom, dashTo, dashTierFilter]);
 
   const focusedMetrics = useMemo(() => {
     if (!focusedMember) return null;
@@ -1820,7 +1937,7 @@ export default function App() {
               </div>
               <div className="card-tags">
                 <span className="chip">{s.tier || '未分级'}</span>
-                <span className="chip">{STATUS[s.status]}</span>
+                {STATUS[s.status] && <span className="chip">{STATUS[s.status]}</span>}
                 {isChainShop(s) && (
                   <span className="chip">连锁 {s.chain_total_stores} 家{Number(s.chain_a_plus_count) ? ` · A级 ${s.chain_a_plus_count}` : ''}</span>
                 )}
@@ -1832,6 +1949,7 @@ export default function App() {
                 <span>{memberName(members.find((m) => m.id === s.assigned_to)) || '未分配'}</span>
               )}
               {s.owner_name && <span>老板 {s.owner_name}</span>}
+              {s.phone && <span>{s.phone}</span>}
               {s.distributor && <span>批发商 {s.distributor}</span>}
               {isPlaced(s, 'test_case') && (
                 <span>已放 Test Case{formatMonthDay(placementOn(s, 'test_case')) ? ` · ${formatMonthDay(placementOn(s, 'test_case'))}` : ''}</span>
@@ -2064,6 +2182,8 @@ export default function App() {
             profile={profile}
             dashFrom={dashFrom}
             dashTo={dashTo}
+            dashTierFilter={dashTierFilter}
+            onTierFilterChange={setDashTierFilter}
             onFromChange={setDashFrom}
             onToChange={setDashTo}
             dashboardRows={dashboardRows}
@@ -2091,14 +2211,17 @@ export default function App() {
             </div>
             <div className="grid">
               <Field label="店铺名称"><input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></Field>
-              <Field label="城市">
-                <select value={draft.city} onChange={(e) => setDraft({ ...draft, city: e.target.value })}>
-                  {draft.city && !CITIES.includes(draft.city) && (
-                    <option value={draft.city}>{draft.city}</option>
-                  )}
-                  {CITIES.map((c) => <option key={c}>{c}</option>)}
-                </select>
-              </Field>
+              <div className="field wide">
+                <span>地址</span>
+                <input
+                  value={draft.address}
+                  onChange={(e) => setDraft(applyAddressToDraft(draft, e.target.value))}
+                  placeholder="填写完整地址，城市将自动识别"
+                />
+                {draft.city && (
+                  <small className="hint">识别城市：{draft.city}</small>
+                )}
+              </div>
               <div className="field wide">
                 <span>是否连锁店</span>
                 <CircleChoice
@@ -2139,7 +2262,7 @@ export default function App() {
                   </Field>
                 </>
               )}
-              <Field wide label="地址"><input value={draft.address} onChange={(e) => setDraft({ ...draft, address: e.target.value })} /></Field>
+
               <Field label="评级">
                 <select value={draft.tier} onChange={(e) => setDraft({ ...draft, tier: e.target.value })}>
                   {['', 'S', 'A+', 'A', 'B'].map((x) => <option key={x} value={x}>{x || '未分级'}</option>)}
@@ -2147,10 +2270,12 @@ export default function App() {
               </Field>
               <Field label="拜访状态">
                 <select value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value })}>
+                  {!STATUS[draft.status] && <option value={draft.status || 'not_visited'}>未选择</option>}
                   {Object.entries(STATUS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                 </select>
               </Field>
               <Field label="老板 / Decision maker"><input value={draft.owner_name} onChange={(e) => setDraft({ ...draft, owner_name: e.target.value })} /></Field>
+              <Field label="联系方式 / Phone"><input value={draft.phone} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} placeholder="电话、邮箱等" /></Field>
               <Field label="员工联系人"><input value={draft.staff_contact} onChange={(e) => setDraft({ ...draft, staff_contact: e.target.value })} /></Field>
               <Field label="老板到店规律"><input value={draft.owner_schedule} onChange={(e) => setDraft({ ...draft, owner_schedule: e.target.value })} /></Field>
               <Field label="主要拿货二级批发商"><input value={draft.distributor} onChange={(e) => setDraft({ ...draft, distributor: e.target.value })} /></Field>
@@ -2179,7 +2304,10 @@ export default function App() {
               </Field>
               {profile?.role === 'manager' && (
                 <Field label="负责人">
-                  <select value={draft.assigned_to || profile.id} onChange={(e) => setDraft({ ...draft, assigned_to: e.target.value })}>
+                  <select
+                    value={draft.assigned_to || profile.id}
+                    onChange={(e) => setDraft(applyAddressToDraft({ ...draft, assigned_to: e.target.value }, draft.address))}
+                  >
                     {memberGroups.map((g) => (
                       <optgroup key={g.teamId || 'none'} label={g.label}>
                         {g.members.map((m) => (
@@ -2438,6 +2566,7 @@ export default function App() {
             </div>
             <p className="export-hint">
               导出 {memberName(exportOwner) || '当前销售'} 的门店数据
+              {activeFilterCount ? '（已应用当前筛选条件）' : ''}
             </p>
             <div className="export-modes" role="radiogroup" aria-label="导出范围">
               {[
@@ -2498,7 +2627,9 @@ export default function App() {
   );
 }
 
-function DashboardPanel({ profile, dashFrom, dashTo, onFromChange, onToChange, dashboardRows }) {
+function DashboardPanel({
+  profile, dashFrom, dashTo, dashTierFilter, onTierFilterChange, onFromChange, onToChange, dashboardRows,
+}) {
   const { mine, regions } = dashboardRows;
   const invalidRange = !dashFrom || !dashTo || dashFrom > dashTo;
   const isManager = profile?.role === 'manager';
@@ -2508,17 +2639,33 @@ function DashboardPanel({ profile, dashFrom, dashTo, onFromChange, onToChange, d
       <div className="dashboard-head">
         <div>
           <h2>{isManager ? '地区看板' : '我的区域看板'}</h2>
-          <p>Mapping 完成比例统一以 {MAPPING_TARGET} 家门店为分母</p>
+          <p>
+            {isManager
+              ? `Mapping 完成比例按销售人数 × ${MAPPING_TARGET} 家为分母`
+              : `Mapping 完成比例以 ${MAPPING_TARGET} 家门店为分母`}
+          </p>
         </div>
-        <div className="dashboard-range">
-          <label>
-            开始
-            <input type="date" value={dashFrom} onChange={(e) => onFromChange(e.target.value)} />
-          </label>
-          <label>
-            结束
-            <input type="date" value={dashTo} onChange={(e) => onToChange(e.target.value)} />
-          </label>
+        <div className="dashboard-controls">
+          {isManager && (
+            <label className="dashboard-tier-filter">
+              分级筛选
+              <select value={dashTierFilter} onChange={(e) => onTierFilterChange(e.target.value)}>
+                <option value="all">全部</option>
+                <option value="S">S 级</option>
+                <option value="aa">A / A+ 级</option>
+              </select>
+            </label>
+          )}
+          <div className="dashboard-range">
+            <label>
+              开始
+              <input type="date" value={dashFrom} onChange={(e) => onFromChange(e.target.value)} />
+            </label>
+            <label>
+              结束
+              <input type="date" value={dashTo} onChange={(e) => onToChange(e.target.value)} />
+            </label>
+          </div>
         </div>
       </div>
       {invalidRange ? (
@@ -2528,6 +2675,12 @@ function DashboardPanel({ profile, dashFrom, dashTo, onFromChange, onToChange, d
           <div className="dashboard-region" key={region.teamId || region.label}>
             <h3 className="dashboard-section-title">{region.label}</h3>
             <AreaMetricsGrid metrics={region.metrics} className="metrics-grid team-summary" />
+            {dashTierFilter === 'all' && (
+              <div className="tier-breakdown">
+                <TierMetricsPanel title="S 级" metrics={region.tierBreakdown.s} />
+                <TierMetricsPanel title="A / A+ 级" metrics={region.tierBreakdown.aa} />
+              </div>
+            )}
             {region.rows.length > 0 && (
               <>
                 <h4 className="dashboard-subtitle">各负责人明细</h4>
@@ -2569,11 +2722,27 @@ function PersonDashboardStrip({ name, teamLabel, dashFrom, dashTo, onFromChange,
   );
 }
 
+function TierMetricsPanel({ title, metrics }) {
+  return (
+    <div className="tier-metrics">
+      <h4 className="tier-metrics-title">{title}</h4>
+      <div className="metrics-grid tier-metrics-grid">
+        <MetricCard label="门店数" value={metrics.storeCount} />
+        <MetricCard label="卖进数量" value={metrics.totalUnits} />
+        <MetricCard label="试抽盒投放" value={metrics.testCaseCount} />
+        <MetricCard label="样机投放" value={metrics.sampleCount} />
+        <MetricCard label="Pop up 场次" value={metrics.popupSessions} />
+        <MetricCard label="Pop up 卖出" value={metrics.popupVozolSales} />
+      </div>
+    </div>
+  );
+}
+
 function AreaMetricsGrid({ metrics, className, hint, visitedLabel = '跑店数' }) {
   return (
     <div className={className || 'metrics-grid'}>
       <MetricCard label={visitedLabel} value={metrics.visitedCount} hint={hint} />
-      <MetricCard label="Mapping 完成" value={`${metrics.mappedCount} / ${MAPPING_TARGET}`} sub={metrics.mappedPct} />
+      <MetricCard label="Mapping 完成" value={`${metrics.mappedCount} / ${metrics.mappingTarget ?? MAPPING_TARGET}`} sub={metrics.mappedPct} />
       <MetricCard label="A 级及以上" value={`${metrics.aPlusCount} / ${metrics.total}`} sub={metrics.aPlusPct} />
       <MetricCard label="样机投放" value={metrics.sampleCount} />
       <MetricCard label="试抽盒投放" value={metrics.testCaseCount} />

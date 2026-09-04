@@ -96,7 +96,7 @@ export default function ShopMap({ shops, hoveredId, statusLabels, onHover, onOpe
               <Tooltip direction="top" offset={[0, -10]} opacity={1}>
                 <div className="map-tip">
                   <strong>{shop.name}</strong>
-                  <span>{statusLabels[shop.status] || shop.status}{shop.tier ? ` · ${shop.tier}` : ''}</span>
+                  <span>{statusLabels[shop.status] || '未选择'}{shop.tier ? ` · ${shop.tier}` : ''}</span>
                 </div>
               </Tooltip>
             </CircleMarker>
