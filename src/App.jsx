@@ -45,14 +45,34 @@ const TAMPA_CITIES = [
   'Indian Rocks Beach', 'Belleair Bluffs', 'Clearwater Beach', 'St Pete Beach',
   'New Port Richey', 'Port Richey', 'Holiday', 'Madeira Beach', 'Treasure Island',
 ];
-const CITIES = [...ORLANDO_CITIES, ...TAMPA_CITIES];
-const TEAM_ORDER = ['tampa', 'orlando'];
-const TEAM_LABEL = { orlando: 'Orlando', tampa: 'Tampa' };
+const TEXAS_CITIES = [
+  'Houston', 'Katy', 'Sugar Land', 'The Woodlands', 'Pearland', 'Cypress', 'Spring',
+  'Pasadena', 'League City', 'Humble', 'Conroe', 'Galveston',
+  'Dallas', 'Fort Worth', 'Arlington', 'Plano', 'Irving', 'Garland', 'Frisco',
+  'McKinney', 'Denton', 'Richardson', 'Mesquite', 'Grand Prairie', 'Carrollton',
+  'Allen', 'Lewisville',
+  'Austin', 'Round Rock', 'Cedar Park', 'Pflugerville', 'Georgetown', 'San Marcos',
+  'San Antonio', 'New Braunfels',
+  'El Paso', 'Corpus Christi', 'Lubbock', 'Laredo', 'McAllen', 'Waco',
+  'Amarillo', 'Midland', 'Odessa', 'College Station', 'Tyler', 'Beaumont',
+  'Brownsville', 'Killeen', 'Abilene',
+];
+const CITIES = [...ORLANDO_CITIES, ...TAMPA_CITIES, ...TEXAS_CITIES];
+const TEAM_ORDER = ['tampa', 'orlando', 'texas'];
+const TEAM_LABEL = { orlando: 'Orlando', tampa: 'Tampa', texas: 'Texas' };
+const TEAM_STATE = { orlando: 'FL', tampa: 'FL', texas: 'TX' };
+const TEAM_MAP_VIEW = {
+  orlando: { center: [28.5383, -81.3792], zoom: 11 },
+  tampa: { center: [27.9506, -82.4572], zoom: 11 },
+  texas: { center: [31.0, -99.9], zoom: 6 },
+};
+const TEAM_SUBTITLE = TEAM_ORDER.map((id) => TEAM_LABEL[id]).join(' · ');
 
 function normalizeTeamId(value) {
   const key = String(value || '').trim().toLowerCase();
   if (key === 'tampa' || key.includes('tampa')) return 'tampa';
   if (key === 'orlando' || key.includes('orlando')) return 'orlando';
+  if (key === 'texas' || key.includes('texas')) return 'texas';
   return '';
 }
 const STATUS = {
@@ -61,19 +81,40 @@ const STATUS = {
   no_interest: '无意向/暂缓',
 };
 function defaultCity(teamId) {
-  return normalizeTeamId(teamId) === 'tampa' ? 'Clearwater' : 'Orlando';
+  const id = normalizeTeamId(teamId);
+  if (id === 'tampa') return 'Clearwater';
+  if (id === 'texas') return 'Houston';
+  return 'Orlando';
+}
+
+function teamStateOf(teamId) {
+  const id = normalizeTeamId(teamId);
+  return TEAM_STATE[id] || 'FL';
 }
 
 function teamCityPool(teamId) {
   const id = normalizeTeamId(teamId);
   if (id === 'tampa') return TAMPA_CITIES;
   if (id === 'orlando') return ORLANDO_CITIES;
+  if (id === 'texas') return TEXAS_CITIES;
   return CITIES;
+}
+
+function mapsSearchHref(shop, teamId) {
+  const name = String(shop?.name || '').trim();
+  const address = String(shop?.address || '').trim();
+  const city = String(shop?.city || '').trim();
+  const blob = `${name} ${address} ${city}`;
+  const state = teamStateOf(teamId);
+  const hasState = /\b(FL|TX|Florida|Texas)\b/i.test(blob);
+  const query = (hasState ? blob : `${blob} ${state}`).trim();
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
 }
 
 function emptyShop(teamId) {
   return {
     name: '', address: '', city: '', phone: '', tier: '', status: 'not_visited',
+    team_id: normalizeTeamId(teamId) || '',
     is_chain: false, chain_name: '', chain_total_stores: '', chain_a_plus_count: '', staff_contact: '', owner_name: '',
     owner_schedule: '', contact_role: '', store_number: '', restock_status: '', distributor: '',
     test_case_placed: false, sample_placed: false, test_case_placed_on: '', sample_placed_on: '',
@@ -1102,7 +1143,7 @@ function Login() {
     <main className="login">
       <form className="panel" onSubmit={submit}>
         <h1>门店拜访清单</h1>
-        <p>Tampa · Orlando · {signup ? '创建账号' : 'Firebase 云端版'}</p>
+        <p>{TEAM_SUBTITLE} · {signup ? '创建账号' : 'Firebase 云端版'}</p>
         {!signup && (
           <>
             <button className="google" type="button" onClick={google} disabled={busy}>
@@ -1225,7 +1266,7 @@ function RegionGate({ user, onDone }) {
     <main className="login">
       <form className="panel" onSubmit={submit}>
         <h1>选择地区</h1>
-        <p>首次登录请选择 Tampa 或 Orlando</p>
+        <p>首次登录请选择 Tampa、Orlando 或 Texas</p>
         <label>
           地区
           <select value={teamId} onChange={(e) => setTeamId(e.target.value)} required>
@@ -1352,12 +1393,12 @@ export default function App() {
         }
         setGeocodeNote(`正在按地址重新定位 ${pending.length} 家…`);
         const shop = pending[0];
-        const queryText = geocodeQuery(shop);
-        const { pool, fallback } = resolveCityContext(shop);
-        const detectedCity = detectCityFromAddress(shop.address, { fallback, knownCities: pool });
+        const { pool, fallback, state } = resolveCityContext(shop);
+        const queryText = geocodeQuery(shop, { state });
+        const detectedCity = detectCityFromAddress(shop.address, { fallback, knownCities: pool, state });
         let coords = null;
         try {
-          coords = await geocodeAddress(queryText, shop, { knownCities: pool });
+          coords = await geocodeAddress(queryText, shop, { knownCities: pool, state });
         } catch {
           coords = null;
         }
@@ -1482,12 +1523,13 @@ export default function App() {
     return {
       pool: teamCityPool(teamId),
       fallback: defaultCity(teamId),
+      state: teamStateOf(teamId),
     };
   }
 
   function applyAddressToDraft(draftLike, address) {
     const { pool, fallback } = resolveCityContext(draftLike);
-    const city = detectCityFromAddress(address, { fallback, knownCities: pool });
+    const city = detectCityFromAddress(address, { fallback, knownCities: pool, state });
     return { ...draftLike, address, city };
   }
 
@@ -1558,11 +1600,11 @@ export default function App() {
     delete payload.popup_vape_buyers;
     delete payload.popup_vozol_buyers;
     delete payload.popup_date;
-    const { pool, fallback } = resolveCityContext(payload);
-    payload.city = detectCityFromAddress(payload.address, { fallback, knownCities: pool });
+    const { pool, fallback, state } = resolveCityContext(payload);
+    payload.city = detectCityFromAddress(payload.address, { fallback, knownCities: pool, state });
     setSaving(true);
     try {
-      const geoQuery = geocodeQuery(payload);
+      const geoQuery = geocodeQuery(payload, { state });
       const prevGeoShop = selected === 'new' ? null : shops.find((s) => s.id === selected);
       if (!geoQuery) {
         payload.lat = null;
@@ -1570,8 +1612,8 @@ export default function App() {
         payload.geocode_query = '';
         payload.geocode_failed = false;
         payload.geocode_version = GEOCODE_VERSION;
-      } else if (selected === 'new' || geoQuery !== geocodeQuery(prevGeoShop || {}) || prevGeoShop?.geocode_version !== GEOCODE_VERSION) {
-        const coords = await geocodeAddress(geoQuery, payload, { knownCities: pool });
+      } else if (selected === 'new' || geoQuery !== geocodeQuery(prevGeoShop || {}, { state }) || prevGeoShop?.geocode_version !== GEOCODE_VERSION) {
+        const coords = await geocodeAddress(geoQuery, payload, { knownCities: pool, state });
         if (coords) {
           payload.lat = coords.lat;
           payload.lng = coords.lng;
@@ -2032,7 +2074,7 @@ export default function App() {
           <h1>门店拜访清单</h1>
           <span>
             {profile?.role === 'manager'
-              ? 'Tampa · Orlando'
+              ? TEAM_SUBTITLE
               : (teamLabelOf(profile?.team_id) || 'Orlando')}
           </span>
         </div>
@@ -2170,6 +2212,8 @@ export default function App() {
                   statusLabels={STATUS}
                   onHover={setHoveredShopId}
                   onOpen={openShop}
+                  fallbackCenter={(TEAM_MAP_VIEW[normalizeTeamId(profile?.team_id)] || TEAM_MAP_VIEW.orlando).center}
+                  fallbackZoom={(TEAM_MAP_VIEW[normalizeTeamId(profile?.team_id)] || TEAM_MAP_VIEW.orlando).zoom}
                 />
               </React.Suspense>
             </div>
@@ -2433,7 +2477,11 @@ export default function App() {
               </button>
               {draft.address && (
                 <a
-                  href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${draft.name} ${draft.address} ${draft.city} FL`)}`}
+                  href={mapsSearchHref(
+                    draft,
+                    members.find((m) => m.id === (draft.assigned_to || profile?.id))?.team_id
+                      || profile?.team_id,
+                  )}
                   target="_blank"
                   rel="noreferrer"
                 >

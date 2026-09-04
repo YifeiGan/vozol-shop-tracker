@@ -3,7 +3,8 @@ import { CircleMarker, MapContainer, TileLayer, Tooltip, useMap } from 'react-le
 import { shopHasCoords } from './geocode';
 import 'leaflet/dist/leaflet.css';
 
-const ORLANDO = [28.5383, -81.3792];
+const DEFAULT_CENTER = [28.5383, -81.3792];
+const DEFAULT_ZOOM = 11;
 
 export const PIN_COLOR = {
   visited: '#0f6e56',
@@ -12,9 +13,11 @@ export const PIN_COLOR = {
   no_interest: '#a32d2d',
 };
 
-function InvalidateAndFit({ shops }) {
+function InvalidateAndFit({ shops, fallbackCenter, fallbackZoom }) {
   const map = useMap();
   const key = shops.map((s) => `${s.id}:${Number(s.lat).toFixed(5)}:${Number(s.lng).toFixed(5)}`).join('|');
+  const emptyCenter = fallbackCenter || DEFAULT_CENTER;
+  const emptyZoom = fallbackZoom ?? DEFAULT_ZOOM;
 
   useEffect(() => {
     const timer = setTimeout(() => map.invalidateSize(), 80);
@@ -24,7 +27,7 @@ function InvalidateAndFit({ shops }) {
   useEffect(() => {
     const timer = setTimeout(() => {
       if (!shops.length) {
-        map.setView(ORLANDO, 11);
+        map.setView(emptyCenter, emptyZoom);
         return;
       }
       if (shops.length === 1) {
@@ -37,7 +40,7 @@ function InvalidateAndFit({ shops }) {
       );
     }, 350);
     return () => clearTimeout(timer);
-  }, [key, map, shops]);
+  }, [key, map, shops, emptyCenter, emptyZoom]);
 
   return null;
 }
@@ -54,17 +57,19 @@ function PanIfHidden({ shops, focusId }) {
   return null;
 }
 
-export default function ShopMap({ shops, hoveredId, statusLabels, onHover, onOpen }) {
+export default function ShopMap({ shops, hoveredId, statusLabels, onHover, onOpen, fallbackCenter, fallbackZoom }) {
   const mapped = useMemo(
     () => shops.filter(shopHasCoords).map((s) => ({ ...s, lat: Number(s.lat), lng: Number(s.lng) })),
     [shops],
   );
+  const emptyCenter = fallbackCenter || DEFAULT_CENTER;
+  const emptyZoom = fallbackZoom ?? DEFAULT_ZOOM;
 
   return (
     <div className="shop-map">
       <MapContainer
-        center={ORLANDO}
-        zoom={11}
+        center={emptyCenter}
+        zoom={emptyZoom}
         scrollWheelZoom
         style={{ height: '100%', width: '100%' }}
       >
@@ -72,7 +77,7 @@ export default function ShopMap({ shops, hoveredId, statusLabels, onHover, onOpe
           attribution='&copy; OpenStreetMap'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
-        <InvalidateAndFit shops={mapped} />
+        <InvalidateAndFit shops={mapped} fallbackCenter={emptyCenter} fallbackZoom={emptyZoom} />
         <PanIfHidden shops={mapped} focusId={hoveredId} />
         {mapped.map((shop) => {
           const active = hoveredId === shop.id;

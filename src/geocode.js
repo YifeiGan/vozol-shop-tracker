@@ -35,10 +35,43 @@ const CITY_ALIASES = {
   "town 'n' country": "Town 'N' Country",
   'dr phillips': 'Dr. Phillips',
   'dr. phillips': 'Dr. Phillips',
+  'ft worth': 'Fort Worth',
+  'ft. worth': 'Fort Worth',
+  'sugarland': 'Sugar Land',
 };
 
+const STATE_BOUNDS = {
+  FL: { lat: [24.4, 31.1], lng: [-87.7, -79.9] },
+  TX: { lat: [25.8, 36.6], lng: [-106.7, -93.4] },
+};
+
+function stateFromAddress(address) {
+  const raw = String(address || '');
+  if (/\bTX\b|\bTexas\b/i.test(raw)) return 'TX';
+  if (/\bFL\b|\bFlorida\b/i.test(raw)) return 'FL';
+  return '';
+}
+
+export function resolveState(shop, options = {}) {
+  const explicit = String(options.state || '').trim().toUpperCase();
+  if (STATE_BOUNDS[explicit]) return explicit;
+  const team = String(shop?.team_id || options.teamId || '').trim().toLowerCase();
+  if (team === 'texas' || team.includes('texas')) return 'TX';
+  if (team === 'tampa' || team.includes('tampa') || team === 'orlando' || team.includes('orlando')) return 'FL';
+  return stateFromAddress(shop?.address) || 'FL';
+}
+
+function inState(lat, lng, state) {
+  const bounds = STATE_BOUNDS[state] || STATE_BOUNDS.FL;
+  return lat >= bounds.lat[0] && lat <= bounds.lat[1] && lng >= bounds.lng[0] && lng <= bounds.lng[1];
+}
+
+function statePattern(state) {
+  return state === 'TX' ? /\bTX\b|\bTexas\b/i : /\bFL\b|\bFlorida\b/i;
+}
+
 function normalizeCityToken(value, knownCities = []) {
-  const raw = String(value || '').trim().replace(/\s+FL\s+\d{5}(?:-\d{4})?.*$/i, '').trim();
+  const raw = String(value || '').trim().replace(/\s+(FL|TX)\s+\d{5}(?:-\d{4})?.*$/i, '').trim();
   if (!raw) return '';
   const key = raw.toLowerCase().replace(/\s+/g, ' ');
   if (CITY_ALIASES[key]) return CITY_ALIASES[key];
@@ -65,22 +98,22 @@ function cityFromNominatimHit(hit, knownCities = []) {
   return normalizeCityToken(candidate, knownCities);
 }
 
-function cityRegionBeforeFlorida(address) {
+function cityRegionBeforeState(address) {
   const raw = String(address || '').trim();
   if (!raw) return '';
 
   const parts = raw.split(',').map((part) => part.trim()).filter(Boolean);
-  const flPartIdx = parts.findIndex((part) => /\bFL\b/i.test(part));
-  if (flPartIdx > 0) {
-    const beforeFl = parts[flPartIdx - 1];
-    if (/^\d/.test(beforeFl) && /\bFL\b/i.test(parts[flPartIdx])) {
-      const inline = parts[flPartIdx].match(/^(.+?)\s+FL\b/i);
+  const statePartIdx = parts.findIndex((part) => /\b(FL|TX|Florida|Texas)\b/i.test(part));
+  if (statePartIdx > 0) {
+    const beforeState = parts[statePartIdx - 1];
+    if (/^\d/.test(beforeState) && /\b(FL|TX)\b/i.test(parts[statePartIdx])) {
+      const inline = parts[statePartIdx].match(/^(.+?)\s+(FL|TX)\b/i);
       if (inline?.[1]) return inline[1].trim();
     }
-    return beforeFl;
+    return beforeState;
   }
 
-  const inline = raw.match(/\s+([A-Za-z][\w\s.'-]+?)\s+FL\s*,?\s*\d{5}(?:-\d{4})?\b/i);
+  const inline = raw.match(/\s+([A-Za-z][\w\s.'-]+?)\s+(FL|TX)\s*,?\s*\d{5}(?:-\d{4})?\b/i);
   if (inline) return inline[1].trim();
 
   return '';
@@ -103,13 +136,13 @@ export function detectCityFromAddress(address, { fallback = '', knownCities = []
   const raw = String(address || '').trim();
   if (!raw) return fallback;
 
-  const region = cityRegionBeforeFlorida(raw);
+  const region = cityRegionBeforeState(raw);
   if (region) {
     const fromRegion = matchKnownCity(region, knownCities);
     if (fromRegion) return fromRegion;
   }
 
-  if (/\bFL\b/i.test(raw) && knownCities.length) {
+  if (knownCities.length) {
     const fromFull = matchKnownCity(raw, knownCities);
     if (fromFull && fromFull !== raw) return fromFull;
   }
@@ -117,14 +150,15 @@ export function detectCityFromAddress(address, { fallback = '', knownCities = []
   return fallback;
 }
 
-export function geocodeQuery(shop) {
+export function geocodeQuery(shop, options = {}) {
   const address = String(shop?.address || '').trim();
   if (!address) return '';
   const street = streetLine(address);
   const zip = zipFrom(address);
   const city = String(shop?.city || '').trim();
+  const state = resolveState(shop, options);
   if (street && zip) return `${street}, ${zip}`;
-  if (street && city) return `${street}, ${city}, FL`;
+  if (street && city) return `${street}, ${city}, ${state}`;
   return address;
 }
 
@@ -135,10 +169,6 @@ export function needsGeocode(shop) {
   if (shopHasCoords(shop) && shop.geocode_query === query && currentVersion) return false;
   if (shop.geocode_failed && shop.geocode_query === query && currentVersion) return false;
   return true;
-}
-
-function inFlorida(lat, lng) {
-  return lat >= 24.4 && lat <= 31.1 && lng >= -87.7 && lng <= -79.9;
 }
 
 async function fetchJson(url) {
@@ -158,18 +188,19 @@ async function fetchJson(url) {
   }
 }
 
-async function geocodeGoogle(shop, knownCities = []) {
+async function geocodeGoogle(shop, knownCities = [], options = {}) {
   const key = import.meta.env.VITE_FIREBASE_API_KEY;
   if (!key) return null;
   const address = String(shop?.address || '').trim();
   const city = String(shop?.city || '').trim();
   if (!address) return null;
+  const state = resolveState(shop, options);
   const parts = [address];
   if (city && !address.toLowerCase().includes(city.toLowerCase())) parts.push(city);
-  if (!/\bfl\b|\bflorida\b/i.test(parts.join(' '))) parts.push('FL');
+  if (!statePattern(state).test(parts.join(' '))) parts.push(state);
   const params = new URLSearchParams({
     address: parts.join(', '),
-    components: 'country:US|administrative_area:FL',
+    components: `country:US|administrative_area:${state}`,
     key,
   });
   const data = await fetchJson(`https://maps.googleapis.com/maps/api/geocode/json?${params}`);
@@ -179,7 +210,7 @@ async function geocodeGoogle(shop, knownCities = []) {
     || data.results[0];
   const lat = Number(result?.geometry?.location?.lat);
   const lng = Number(result?.geometry?.location?.lng);
-  if (!Number.isFinite(lat) || !Number.isFinite(lng) || !inFlorida(lat, lng)) return null;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || !inState(lat, lng, state)) return null;
   return {
     lat,
     lng,
@@ -201,10 +232,10 @@ function hitBlob(hit) {
   ].filter(Boolean).join(' ').toLowerCase();
 }
 
-function parseHit(hit, knownCities = []) {
+function parseHit(hit, knownCities = [], state = 'FL') {
   const lat = Number(hit?.lat);
   const lng = Number(hit?.lon);
-  if (!Number.isFinite(lat) || !Number.isFinite(lng) || !inFlorida(lat, lng)) return null;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || !inState(lat, lng, state)) return null;
   return {
     lat,
     lng,
@@ -212,19 +243,20 @@ function parseHit(hit, knownCities = []) {
   };
 }
 
-function pickNominatimHit(hits, shop, knownCities = []) {
+function pickNominatimHit(hits, shop, knownCities = [], state = 'FL') {
   const zip = zipFrom(shop?.address);
   const list = Array.isArray(hits) ? hits : [];
   if (zip) {
     const byZip = list.find((hit) => hitBlob(hit).includes(zip));
-    if (byZip) return parseHit(byZip, knownCities);
-    return parseHit(list[0], knownCities);
+    if (byZip) return parseHit(byZip, knownCities, state);
+    return parseHit(list[0], knownCities, state);
   }
-  return parseHit(list[0], knownCities);
+  return parseHit(list[0], knownCities, state);
 }
 
-async function geocodeNominatim(shop, knownCities = []) {
-  const queries = [...new Set([geocodeQuery(shop), String(shop?.address || '').trim()].filter(Boolean))];
+async function geocodeNominatim(shop, knownCities = [], options = {}) {
+  const queries = [...new Set([geocodeQuery(shop, options), String(shop?.address || '').trim()].filter(Boolean))];
+  const state = resolveState(shop, options);
   for (const q of queries) {
     const params = new URLSearchParams({
       format: 'jsonv2',
@@ -234,7 +266,7 @@ async function geocodeNominatim(shop, knownCities = []) {
       q,
     });
     const hits = await fetchJson(`https://nominatim.openstreetmap.org/search?${params}`);
-    const coords = pickNominatimHit(hits, shop, knownCities);
+    const coords = pickNominatimHit(hits, shop, knownCities, state);
     if (coords) return coords;
     await sleep(1100);
   }
@@ -244,8 +276,8 @@ async function geocodeNominatim(shop, knownCities = []) {
 export async function geocodeAddress(query, shop, options = {}) {
   const knownCities = options.knownCities || [];
   const target = shop || { address: query, city: '' };
-  if (!geocodeQuery(target) && !String(query || '').trim()) return null;
-  return (await geocodeGoogle(target, knownCities)) || (await geocodeNominatim(target, knownCities));
+  if (!geocodeQuery(target, options) && !String(query || '').trim()) return null;
+  return (await geocodeGoogle(target, knownCities, options)) || (await geocodeNominatim(target, knownCities, options));
 }
 
 export async function geocodeShops(shops, onEach) {
