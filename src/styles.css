@@ -563,13 +563,26 @@ code { font-size: 12.5px; }
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 16px;
+  padding: 0 16px 16px;
+}
+.dashboard-subtabs {
+  margin: 0 -16px 0;
+  padding: 0 16px;
+  background: #fff;
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  z-index: 3;
 }
 .app.dashboard-mode .dashboard {
   margin-bottom: 0;
+  margin-top: 16px;
   max-width: 1100px;
   margin-left: auto;
   margin-right: auto;
+}
+.app.dashboard-mode .dashboard.daily-summary {
+  max-width: none;
 }
 .dashboard {
   background: var(--surface);
@@ -602,6 +615,28 @@ code { font-size: 12.5px; }
   flex-wrap: wrap;
   gap: 12px;
   align-items: flex-end;
+}
+.dashboard-controls button {
+  border: 1px solid transparent;
+  background: var(--fill);
+  border-radius: 10px;
+  padding: 7px 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  font-size: 13px;
+}
+.dashboard-controls .dash-today-btn.on {
+  background: var(--navy);
+  color: #fff;
+}
+.dashboard-controls .export-csv {
+  background: var(--navy);
+  color: #fff;
+}
+.dashboard-controls button:disabled {
+  opacity: 0.45;
 }
 .dashboard-tier-filter {
   display: flex;
@@ -754,6 +789,14 @@ code { font-size: 12.5px; }
 .dashboard-table .total-row {
   background: #efe8d8;
   font-weight: 600;
+}
+.daily-report-table th[scope="row"] {
+  position: sticky;
+  left: 0;
+  background: #f7f4ee;
+  font-weight: 500;
+  color: var(--ink);
+  z-index: 1;
 }
 .manager-note, .count {
   font-size: 12.5px;

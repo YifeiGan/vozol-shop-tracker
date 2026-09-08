@@ -28,22 +28,27 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import { auth, configured, db, googleProvider } from './firebase';
-import { detectCityFromAddress, geocodeAddress, geocodeQuery, GEOCODE_VERSION, needsGeocode, shopHasCoords } from './geocode';
+import { geocodeAddress, geocodeQuery, GEOCODE_VERSION, needsGeocode, shopHasCoords } from './geocode';
 
 const ShopMap = React.lazy(() => import('./ShopMap'));
 
-const ORLANDO_CITIES = [
+const FLORIDA_CITIES = ['Tampa', 'Orlando'];
+const TAMPA_AREA_CITIES = [
+  'Tampa', 'Clearwater', 'St Petersburg', 'Largo', 'Dunedin', 'Pinellas Park',
+  'Oldsmar', 'Palm Harbor', 'Tarpon Springs', 'Safety Harbor', 'Seminole',
+  'Indian Rocks Beach', 'Belleair Bluffs', 'Clearwater Beach', 'St Pete Beach',
+  'New Port Richey', 'Port Richey', 'Holiday', 'Madeira Beach', 'Treasure Island',
+];
+const ORLANDO_AREA_CITIES = [
   'Orlando', 'Winter Park', 'Kissimmee', 'Sanford', 'Altamonte Springs',
   'Lake Mary', 'Apopka', 'Oviedo', 'Winter Garden', 'Windermere',
   'Ocoee', 'Clermont', 'St Cloud', 'Casselberry', 'Maitland',
   'Longwood', 'Winter Springs', 'Celebration', 'Dr. Phillips', 'Lake Buena Vista',
   'Davenport', 'Poinciana',
 ];
-const TAMPA_CITIES = [
-  'Tampa', 'Clearwater', 'St Petersburg', 'Largo', 'Dunedin', 'Pinellas Park',
-  'Oldsmar', 'Palm Harbor', 'Tarpon Springs', 'Safety Harbor', 'Seminole',
-  'Indian Rocks Beach', 'Belleair Bluffs', 'Clearwater Beach', 'St Pete Beach',
-  'New Port Richey', 'Port Richey', 'Holiday', 'Madeira Beach', 'Treasure Island',
+const FLORIDA_AREAS = [
+  { id: 'tampa', label: 'Tampa', cities: TAMPA_AREA_CITIES },
+  { id: 'orlando', label: 'Orlando', cities: ORLANDO_AREA_CITIES },
 ];
 const TEXAS_CITIES = [
   'Houston', 'Katy', 'Sugar Land', 'The Woodlands', 'Pearland', 'Cypress', 'Spring',
@@ -57,23 +62,110 @@ const TEXAS_CITIES = [
   'Amarillo', 'Midland', 'Odessa', 'College Station', 'Tyler', 'Beaumont',
   'Brownsville', 'Killeen', 'Abilene',
 ];
-const CITIES = [...ORLANDO_CITIES, ...TAMPA_CITIES, ...TEXAS_CITIES];
-const TEAM_ORDER = ['tampa', 'orlando', 'texas'];
-const TEAM_LABEL = { orlando: 'Orlando', tampa: 'Tampa', texas: 'Texas' };
-const TEAM_STATE = { orlando: 'FL', tampa: 'FL', texas: 'TX' };
+const DENVER_CITIES = [
+  'Denver', 'Aurora', 'Lakewood', 'Thornton', 'Arvada', 'Westminster', 'Centennial',
+  'Boulder', 'Broomfield', 'Commerce City', 'Englewood', 'Littleton', 'Parker',
+  'Castle Rock', 'Highlands Ranch', 'Wheat Ridge', 'Northglenn', 'Golden',
+  'Greenwood Village', 'Lone Tree', 'Louisville', 'Lafayette', 'Erie', 'Brighton',
+  'Superior', 'Federal Heights', 'Sheridan', 'Glendale',
+];
+const GREAT_LAKES_CITIES = [
+  'Chicago', 'Naperville', 'Aurora', 'Elgin', 'Joliet',
+  'Detroit', 'Grand Rapids', 'Ann Arbor', 'Lansing', 'Flint', 'Kalamazoo',
+  'Cleveland', 'Columbus', 'Toledo', 'Cincinnati', 'Akron',
+  'Milwaukee', 'Madison', 'Green Bay',
+  'Indianapolis', 'Fort Wayne', 'South Bend',
+  'Minneapolis', 'St Paul', 'Duluth',
+  'Buffalo', 'Rochester',
+];
+const TEAM_CITIES = {
+  florida: FLORIDA_CITIES,
+  texas: TEXAS_CITIES,
+  denver: DENVER_CITIES,
+  great_lakes: GREAT_LAKES_CITIES,
+};
+const TEAM_ORDER = ['florida', 'texas', 'denver', 'great_lakes'];
+const TEAM_LABEL = {
+  florida: 'Florida',
+  texas: 'Texas',
+  denver: 'Denver',
+  great_lakes: 'The Great Lakes',
+};
+const TEAM_STATE = { florida: 'FL', texas: 'TX', denver: 'CO', great_lakes: 'GL' };
+const TEAM_DEFAULT_CITY = { florida: 'Tampa', texas: 'Houston', denver: 'Denver', great_lakes: 'Chicago' };
 const TEAM_MAP_VIEW = {
-  orlando: { center: [28.5383, -81.3792], zoom: 11 },
-  tampa: { center: [27.9506, -82.4572], zoom: 11 },
+  florida: { center: [28.0, -82.0], zoom: 7 },
   texas: { center: [31.0, -99.9], zoom: 6 },
+  denver: { center: [39.7392, -104.9903], zoom: 11 },
+  great_lakes: { center: [42.3, -86.0], zoom: 5 },
 };
 const TEAM_SUBTITLE = TEAM_ORDER.map((id) => TEAM_LABEL[id]).join(' · ');
+const STATE_IN_ADDRESS_RE = /\b(FL|TX|CO|MI|IL|OH|WI|IN|MN|Florida|Texas|Colorado|Michigan|Illinois|Ohio|Wisconsin|Indiana|Minnesota)\b/i;
+
+function teamChoiceHint() {
+  const labels = TEAM_ORDER.map((id) => TEAM_LABEL[id]).filter(Boolean);
+  if (labels.length <= 1) return labels[0] || '地区';
+  return `${labels.slice(0, -1).join('、')} 或 ${labels[labels.length - 1]}`;
+}
 
 function normalizeTeamId(value) {
-  const key = String(value || '').trim().toLowerCase();
+  const key = String(value || '').trim().toLowerCase().replace(/[_-]+/g, ' ');
+  if (key === 'florida' || key === 'fl' || key.includes('florida') || key.includes('tampa') || key.includes('orlando')) return 'florida';
+  if (key === 'texas' || key === 'tx' || key.includes('texas')) return 'texas';
+  if (key === 'denver' || key === 'co' || key.includes('denver') || key.includes('colorado')) return 'denver';
+  if (key === 'great lakes' || key === 'great_lakes' || key === 'gl' || key.includes('lakes')) return 'great_lakes';
+  return '';
+}
+
+function cityToFloridaArea(city) {
+  const c = String(city || '').trim().toLowerCase();
+  if (!c) return '';
+  if (TAMPA_AREA_CITIES.some((name) => name.toLowerCase() === c)) return 'tampa';
+  if (ORLANDO_AREA_CITIES.some((name) => name.toLowerCase() === c)) return 'orlando';
+  return '';
+}
+
+function normalizeAreaId(value, city) {
+  const key = String(value || '').trim().toLowerCase().replace(/[_-]+/g, ' ');
   if (key === 'tampa' || key.includes('tampa')) return 'tampa';
   if (key === 'orlando' || key.includes('orlando')) return 'orlando';
-  if (key === 'texas' || key.includes('texas')) return 'texas';
-  return '';
+  return cityToFloridaArea(city);
+}
+
+function dashboardSectionsFor(regionId) {
+  if (regionId === 'florida') return FLORIDA_AREAS;
+  const label = TEAM_LABEL[regionId];
+  if (!label) return [];
+  return [{ id: regionId, label, cities: TEAM_CITIES[regionId] || [] }];
+}
+
+function shopAreaId(shop, members = []) {
+  const stored = String(shop?.area_id || '').trim().toLowerCase();
+  if (stored === 'tampa' || stored === 'orlando') return stored;
+  const fromCity = cityToFloridaArea(shop?.city);
+  if (fromCity) return fromCity;
+  const fromTeam = normalizeAreaId(shop?.team_id);
+  if (fromTeam) return fromTeam;
+  const owner = members.find((m) => m.id === shop?.assigned_to);
+  return owner?.area_id || '';
+}
+
+function memberAreaId(member, shops = []) {
+  if (member?.area_id === 'tampa' || member?.area_id === 'orlando') return member.area_id;
+  const theirs = shops.filter((s) => s.assigned_to === member?.id);
+  let tampa = 0;
+  let orlando = 0;
+  theirs.forEach((s) => {
+    const area = shopAreaId(s, [member]);
+    if (area === 'tampa') tampa += 1;
+    if (area === 'orlando') orlando += 1;
+  });
+  if (tampa === 0 && orlando === 0) return '';
+  return tampa >= orlando ? 'tampa' : 'orlando';
+}
+
+function areaLabelOf(areaId) {
+  return FLORIDA_AREAS.find((area) => area.id === areaId)?.label || '';
 }
 const STATUS = {
   visited: '已卖进',
@@ -81,23 +173,26 @@ const STATUS = {
   no_interest: '无意向/暂缓',
 };
 function defaultCity(teamId) {
-  const id = normalizeTeamId(teamId);
-  if (id === 'tampa') return 'Clearwater';
-  if (id === 'texas') return 'Houston';
-  return 'Orlando';
+  return TEAM_DEFAULT_CITY[normalizeTeamId(teamId)] || TEAM_DEFAULT_CITY.florida;
 }
 
 function teamStateOf(teamId) {
-  const id = normalizeTeamId(teamId);
-  return TEAM_STATE[id] || 'FL';
+  return TEAM_STATE[normalizeTeamId(teamId)] || TEAM_STATE.florida;
 }
 
 function teamCityPool(teamId) {
-  const id = normalizeTeamId(teamId);
-  if (id === 'tampa') return TAMPA_CITIES;
-  if (id === 'orlando') return ORLANDO_CITIES;
-  if (id === 'texas') return TEXAS_CITIES;
-  return CITIES;
+  return TEAM_CITIES[normalizeTeamId(teamId)] || TEAM_CITIES.florida;
+}
+
+function teamMapViewOf(teamId) {
+  return TEAM_MAP_VIEW[normalizeTeamId(teamId)] || TEAM_MAP_VIEW.florida;
+}
+
+function citySelectOptions(teamId, currentCity) {
+  const pool = teamCityPool(teamId);
+  const current = String(currentCity || '').trim();
+  if (current && !pool.includes(current)) return [current, ...pool];
+  return pool;
 }
 
 function mapsSearchHref(shop, teamId) {
@@ -106,7 +201,10 @@ function mapsSearchHref(shop, teamId) {
   const city = String(shop?.city || '').trim();
   const blob = `${name} ${address} ${city}`;
   const state = teamStateOf(teamId);
-  const hasState = /\b(FL|TX|Florida|Texas)\b/i.test(blob);
+  if (!state || state === 'GL') {
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(blob.trim())}`;
+  }
+  const hasState = STATE_IN_ADDRESS_RE.test(blob);
   const query = (hasState ? blob : `${blob} ${state}`).trim();
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
 }
@@ -117,10 +215,14 @@ function emptyShop(teamId) {
     team_id: normalizeTeamId(teamId) || '',
     is_chain: false, chain_name: '', chain_total_stores: '', chain_a_plus_count: '', staff_contact: '', owner_name: '',
     owner_schedule: '', contact_role: '', store_number: '', restock_status: '', distributor: '',
-    test_case_placed: false, sample_placed: false, test_case_placed_on: '', sample_placed_on: '',
-    test_case_today: false, sample_today: false,
+    test_case_placed: false, sample_placed: false, display_card_placed: false,
+    test_case_placed_on: '', sample_placed_on: '', display_card_placed_on: '',
+    test_case_today: false, sample_today: false, display_card_today: false,
+    wholesale_in_store: false, wholesale_found_on: '', wholesale_today: false,
+    units_kit_today: '', units_pod_today: '',
     traffic_note: '', traffic_notes: [], brands_note: '', next_plan: '',
     popup_notes: [], popup_date: todayDateKey(), popup_flow: '', popup_vape_buyers: '', popup_vozol_buyers: '',
+    popup_kit_sold: '', popup_pod_sold: '',
     next_plan_date: '', next_plan_time: '', source_url: '', starred: false,
   };
 }
@@ -130,14 +232,29 @@ const POPUP_FIELDS = [
   { key: 'flow', draftKey: 'popup_flow', label: '1、人流情况' },
   { key: 'vape_buyers', draftKey: 'popup_vape_buyers', label: '2、买电子烟人数' },
   { key: 'vozol_buyers', draftKey: 'popup_vozol_buyers', label: '3、买 VOZOL 人数' },
+  { key: 'kit_sold', draftKey: 'popup_kit_sold', label: '4、活动卖出支数-KIT' },
+  { key: 'pod_sold', draftKey: 'popup_pod_sold', label: '5、活动卖出支数-POD' },
 ];
 
 function formatNextPlan(shop) {
+  if (isNextPlanOverdue(shop)) return '';
   const date = (shop?.next_plan_date || '').trim();
   if (!date) return '';
   const time = (shop?.next_plan_time || '').trim();
   return time ? `${date} ${time}` : date;
 }
+
+function isNextPlanOverdue(shop, today = todayDateKey()) {
+  const date = String(shop?.next_plan_date || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !today) return false;
+  return date < today;
+}
+
+const CLEARED_NEXT_PLAN = {
+  next_plan_date: '',
+  next_plan_time: '',
+  next_plan: '',
+};
 
 function parsePlanTime(timeStr) {
   const m = String(timeStr || '').trim().match(/^(\d{1,2}):(\d{2})$/);
@@ -209,6 +326,7 @@ function timeValue(value) {
 }
 
 function nextFollowUpValue(shop) {
+  if (isNextPlanOverdue(shop)) return Number.MAX_SAFE_INTEGER;
   const date = (shop?.next_plan_date || '').trim();
   if (!date) return Number.MAX_SAFE_INTEGER;
   const time = (shop?.next_plan_time || '00:00').trim();
@@ -221,6 +339,10 @@ function tierRank(tier) {
 }
 
 function todayDateKey(date = new Date()) {
+  if (typeof date === 'string') {
+    const trimmed = date.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+  }
   const d = date instanceof Date ? date : new Date(date);
   if (Number.isNaN(d.getTime())) return '';
   const y = d.getFullYear();
@@ -319,7 +441,7 @@ function serializeTrafficNotes(notes) {
 }
 
 function emptyPopupEntry() {
-  return { flow: '', vape_buyers: '', vozol_buyers: '' };
+  return { flow: '', vape_buyers: '', vozol_buyers: '', kit_sold: '', pod_sold: '' };
 }
 
 function popupHasContent(entry) {
@@ -335,6 +457,8 @@ function normalizePopupNotes(shop) {
       flow: String(n.flow || '').trim(),
       vape_buyers: String(n.vape_buyers || '').trim(),
       vozol_buyers: String(n.vozol_buyers || '').trim(),
+      kit_sold: String(n.kit_sold || '').trim(),
+      pod_sold: String(n.pod_sold || '').trim(),
       at: timeValue(n.at),
     }))
     .filter(popupHasContent)
@@ -354,6 +478,8 @@ function popupDraftFields(entry) {
     popup_flow: entry?.flow || '',
     popup_vape_buyers: entry?.vape_buyers || '',
     popup_vozol_buyers: entry?.vozol_buyers || '',
+    popup_kit_sold: entry?.kit_sold || '',
+    popup_pod_sold: entry?.pod_sold || '',
   };
 }
 
@@ -377,6 +503,8 @@ function mergePopupNotes(existingNotes, entry, dateKey) {
     flow: String(entry?.flow || '').trim(),
     vape_buyers: String(entry?.vape_buyers || '').trim(),
     vozol_buyers: String(entry?.vozol_buyers || '').trim(),
+    kit_sold: String(entry?.kit_sold || '').trim(),
+    pod_sold: String(entry?.pod_sold || '').trim(),
   };
   const withoutDate = existingNotes.filter((n) => n.date !== date);
   const today = todayDateKey();
@@ -388,7 +516,9 @@ function mergePopupNotes(existingNotes, entry, dateKey) {
   const same = prev
     && prev.flow === next.flow
     && prev.vape_buyers === next.vape_buyers
-    && prev.vozol_buyers === next.vozol_buyers;
+    && prev.vozol_buyers === next.vozol_buyers
+    && prev.kit_sold === next.kit_sold
+    && prev.pod_sold === next.pod_sold;
   const at = same ? (prev.at || Date.now()) : Date.now();
   return [{ date, ...next, at }, ...withoutDate]
     .sort((a, b) => {
@@ -404,6 +534,8 @@ function serializePopupNotes(notes) {
     flow: n.flow,
     vape_buyers: n.vape_buyers,
     vozol_buyers: n.vozol_buyers,
+    kit_sold: n.kit_sold,
+    pod_sold: n.pod_sold,
     at: timeValue(n.at) || Date.now(),
   }));
 }
@@ -438,6 +570,14 @@ function nextPlacement(prevShop, todayYes, kind) {
   return { placed: prevPlaced, on: prevOn };
 }
 
+function nextDatedFlag(prevOn, todayYes) {
+  const today = todayDateKey();
+  const prev = localDateKeyFromTimestamp(prevOn) || String(prevOn || '').trim();
+  if (todayYes) return today;
+  if (prev === today) return '';
+  return prev;
+}
+
 function placedToday(shop, kind, today = todayDateKey()) {
   return placementOn(shop, kind) === today;
 }
@@ -460,9 +600,14 @@ function placementHint(draft, kind) {
 
 function localDateKeyFromTimestamp(value) {
   if (!value) return '';
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+  }
   if (typeof value.toDate === 'function') return todayDateKey(value.toDate());
   if (value instanceof Date) return todayDateKey(value);
-  if (typeof value === 'string' || typeof value === 'number') return todayDateKey(new Date(value));
+  if (typeof value === 'number') return todayDateKey(new Date(value));
+  if (typeof value === 'string') return todayDateKey(new Date(value));
   return '';
 }
 
@@ -472,6 +617,14 @@ function isTierS(tier) {
 
 function isTierAAPlus(tier) {
   return tier === 'A+' || tier === 'A';
+}
+
+function isTierSAPlus(tier) {
+  return tier === 'S' || tier === 'A+';
+}
+
+function isTierAB(tier) {
+  return tier === 'A' || tier === 'B';
 }
 
 function filterShopsByTier(shopList, tierFilter) {
@@ -490,6 +643,19 @@ function popupVozolSalesInRange(shop, start, end) {
   return normalizePopupNotes(shop)
     .filter((n) => isDateInRange(n.date, start, end))
     .reduce((sum, n) => sum + (Number(n.vozol_buyers) || 0), 0);
+}
+
+function popupSoldInRange(shop, start, end, field) {
+  return normalizePopupNotes(shop)
+    .filter((n) => isDateInRange(n.date, start, end))
+    .reduce((sum, n) => {
+      const kitRaw = String(n.kit_sold ?? '').trim();
+      const podRaw = String(n.pod_sold ?? '').trim();
+      if (field === 'pod') return sum + (Number(podRaw) || 0);
+      if (kitRaw !== '') return sum + (Number(kitRaw) || 0);
+      if (podRaw === '') return sum + (Number(n.vozol_buyers) || 0);
+      return sum;
+    }, 0);
 }
 
 function computeTierMetrics(shopList, start, end) {
@@ -518,9 +684,22 @@ function isChainShop(shop) {
   return Boolean(shop?.is_chain) && Number(shop.chain_total_stores) >= CHAIN_MIN_STORES;
 }
 
+function calendarDateKey(value) {
+  if (value == null || value === '') return '';
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    const m = trimmed.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (m) return m[1];
+  }
+  return localDateKeyFromTimestamp(value);
+}
+
 function isDateInRange(dateKey, start, end) {
-  if (!dateKey || !start || !end) return false;
-  return dateKey >= start && dateKey <= end;
+  const date = calendarDateKey(dateKey);
+  const from = calendarDateKey(start);
+  const to = calendarDateKey(end);
+  if (!date || !from || !to) return false;
+  return date >= from && date <= to;
 }
 
 function monthStartKey(date = new Date()) {
@@ -537,39 +716,88 @@ function normalizeUnitsLog(shop) {
   const raw = shop?.units_log;
   if (!Array.isArray(raw) || !raw.length) return [];
   return raw
-    .map((e) => ({ date: e.date || '', units: Number(e.units) || 0 }))
-    .filter((e) => e.date)
+    .map((e) => {
+      const date = calendarDateKey(e.date) || String(e.date || '').trim();
+      const hasSplit = (e.kit != null && e.kit !== '') || (e.pod != null && e.pod !== '');
+      const kit = Number(e.kit);
+      const pod = Number(e.pod);
+      const units = Number(e.units) || 0;
+      const kitN = Number.isFinite(kit) ? kit : 0;
+      const podN = Number.isFinite(pod) ? pod : 0;
+      return {
+        date,
+        kit: hasSplit ? kitN : units,
+        pod: hasSplit ? podN : 0,
+        units: hasSplit ? kitN + podN : units,
+      };
+    })
+    .filter((e) => e.date && /^\d{4}-\d{2}-\d{2}$/.test(e.date))
     .sort((a, b) => String(b.date).localeCompare(String(a.date)));
 }
 
-function todayUnitsValue(log, today = todayDateKey()) {
+function todayUnitsValue(log, today = todayDateKey(), field = 'units') {
   const entry = normalizeUnitsLog({ units_log: log }).find((e) => e.date === today);
-  return entry ? String(entry.units) : '';
+  if (!entry) return '';
+  const value = Number(entry[field]) || 0;
+  return value ? String(value) : '';
 }
 
-function mergeUnitsLog(existingLog, todayUnitsText) {
+function mergeUnitsLog(existingLog, kitText, podText) {
   const today = todayDateKey();
-  const text = String(todayUnitsText ?? '').trim();
+  const kitRaw = String(kitText ?? '').trim();
+  const podRaw = String(podText ?? '').trim();
   const withoutToday = normalizeUnitsLog({ units_log: existingLog }).filter((e) => e.date !== today);
-  if (!text) return withoutToday;
-  const units = Number(text);
-  if (Number.isNaN(units) || units < 0) return withoutToday;
-  return [{ date: today, units }, ...withoutToday];
+  if (!kitRaw && !podRaw) return withoutToday;
+  const kit = kitRaw === '' ? 0 : Number(kitRaw);
+  const pod = podRaw === '' ? 0 : Number(podRaw);
+  if (Number.isNaN(kit) || Number.isNaN(pod) || kit < 0 || pod < 0) return withoutToday;
+  return [{ date: today, units: kit + pod, kit, pod }, ...withoutToday].slice(0, 365);
 }
 
-function unitsInRange(shop, start, end) {
+function unitsInRange(shop, start, end, field = 'units') {
   return normalizeUnitsLog(shop)
     .filter((e) => isDateInRange(e.date, start, end))
-    .reduce((sum, e) => sum + e.units, 0);
+    .reduce((sum, e) => sum + (Number(e[field]) || 0), 0);
+}
+
+function shopActivityDateKeys(shop) {
+  const dates = new Set();
+  const add = (value) => {
+    const key = calendarDateKey(value);
+    if (key) dates.add(key);
+  };
+  normalizeTrafficNotes(shop).forEach((n) => {
+    if (n.text && n.date) add(n.date);
+  });
+  normalizePopupNotes(shop).forEach((n) => {
+    if (popupHasContent(n) && n.date) add(n.date);
+  });
+  normalizeUnitsLog(shop).forEach((e) => {
+    if (e.date) add(e.date);
+  });
+  ['sample', 'test_case'].forEach((kind) => {
+    add(placementOn(shop, kind));
+  });
+  add(shop?.wholesale_found_on);
+  return dates;
+}
+
+function shopWorkedInRange(shop, start, end) {
+  for (const date of shopActivityDateKeys(shop)) {
+    if (isDateInRange(date, start, end)) return true;
+  }
+  return false;
 }
 
 function shopActiveInRange(shop, start, end) {
-  if (isDateInRange(shopCreatedDateKey(shop), start, end)) return true;
-  if (normalizeTrafficNotes(shop).some((n) => n.text && isDateInRange(n.date, start, end))) return true;
-  if (normalizePopupNotes(shop).some((n) => popupHasContent(n) && isDateInRange(n.date, start, end))) return true;
-  if (normalizeUnitsLog(shop).some((e) => isDateInRange(e.date, start, end))) return true;
-  if (isDateInRange(placementOn(shop, 'sample'), start, end)) return true;
-  if (isDateInRange(placementOn(shop, 'test_case'), start, end)) return true;
+  return shopWorkedInRange(shop, start, end);
+}
+
+function hasHistoryBefore(shop, dateKey) {
+  if (!dateKey) return false;
+  for (const date of shopActivityDateKeys(shop)) {
+    if (date && date < dateKey) return true;
+  }
   return false;
 }
 
@@ -623,6 +851,92 @@ function computeAreaMetrics(shopList, start, end, headcount = 1) {
   };
 }
 
+const DAILY_METRIC_ROWS = [
+  { key: 'visited', label: '跑店数量' },
+  { key: 'revisit', label: '回访店铺数量' },
+  { key: 'saVisited', label: '访店S/A+' },
+  { key: 'saTestCase', label: '试抽盒投放' },
+  { key: 'saSample', label: '样机投放' },
+  { key: 'saDisplayCard', label: '硬台卡投放', blank: true },
+  { key: 'saSoldIn', label: '自己卖进店铺数' },
+  { key: 'saKit', label: '卖进数量-KIT' },
+  { key: 'saPod', label: '卖进数量-POD' },
+  { key: 'saWholesale', label: '访店发现批发进店数' },
+  { key: 'saPopup', label: '活动场次' },
+  { key: 'saPopupKit', label: '活动卖出支数-KIT' },
+  { key: 'saPopupPod', label: '活动卖出支数-POD' },
+  { key: 'saContact', label: '决策人联系方式' },
+  { key: 'abVisited', label: '访店A/B店铺' },
+  { key: 'abTestCase', label: '试抽盒投放' },
+  { key: 'abSample', label: '样机投放' },
+  { key: 'abDisplayCard', label: '硬台卡投放', blank: true },
+  { key: 'abSoldIn', label: '卖进店铺数' },
+  { key: 'abKit', label: '卖进数量-KIT' },
+  { key: 'abPod', label: '卖进数量-POD' },
+  { key: 'abWholesale', label: '访店发现批发进店数' },
+  { key: 'abPopup', label: '活动场次' },
+  { key: 'abPopupKit', label: '活动卖出支数-KIT' },
+  { key: 'abPopupPod', label: '活动卖出支数-POD' },
+  { key: 'abContact', label: '决策人联系方式' },
+];
+
+function computeGroupDayMetrics(shopList, start, end) {
+  const worked = shopList.filter((s) => shopWorkedInRange(s, start, end));
+  const soldIn = worked.filter((s) => unitsInRange(s, start, end) > 0).length;
+  const wholesale = worked.filter((s) => (
+    isDateInRange(s.wholesale_found_on, start, end)
+  )).length;
+  return {
+    visited: worked.length,
+    testCase: worked.filter((s) => placementInRange(s, 'test_case', start, end)).length,
+    sample: worked.filter((s) => placementInRange(s, 'sample', start, end)).length,
+    displayCard: worked.filter((s) => placementInRange(s, 'display_card', start, end)).length,
+    soldIn,
+    kit: worked.reduce((sum, s) => sum + unitsInRange(s, start, end, 'kit'), 0),
+    pod: worked.reduce((sum, s) => sum + unitsInRange(s, start, end, 'pod'), 0),
+    wholesale,
+    popup: worked.reduce((sum, s) => sum + popupSessionsInRange(s, start, end), 0),
+    popupKit: worked.reduce((sum, s) => sum + popupSoldInRange(s, start, end, 'kit'), 0),
+    popupPod: worked.reduce((sum, s) => sum + popupSoldInRange(s, start, end, 'pod'), 0),
+    contact: worked.filter((s) => String(s.owner_name || '').trim() || String(s.phone || '').trim()).length,
+  };
+}
+
+function computeDailyReportMetrics(shopList, start, end) {
+  const worked = shopList.filter((s) => shopWorkedInRange(s, start, end));
+  const revisit = worked.filter((s) => hasHistoryBefore(s, start)).length;
+  const sa = computeGroupDayMetrics(shopList.filter((s) => isTierSAPlus(s.tier)), start, end);
+  const ab = computeGroupDayMetrics(shopList.filter((s) => isTierAB(s.tier)), start, end);
+  return {
+    visited: worked.length,
+    revisit,
+    saVisited: sa.visited,
+    saTestCase: sa.testCase,
+    saSample: sa.sample,
+    saDisplayCard: '',
+    saSoldIn: sa.soldIn,
+    saKit: sa.kit,
+    saPod: sa.pod,
+    saWholesale: sa.wholesale,
+    saPopup: sa.popup,
+    saPopupKit: sa.popupKit,
+    saPopupPod: sa.popupPod,
+    saContact: sa.contact,
+    abVisited: ab.visited,
+    abTestCase: ab.testCase,
+    abSample: ab.sample,
+    abDisplayCard: '',
+    abSoldIn: ab.soldIn,
+    abKit: ab.kit,
+    abPod: ab.pod,
+    abWholesale: ab.wholesale,
+    abPopup: ab.popup,
+    abPopupKit: ab.popupKit,
+    abPopupPod: ab.popupPod,
+    abContact: ab.contact,
+  };
+}
+
 function memberName(member) {
   return member?.full_name || member?.email || member?.id || '';
 }
@@ -644,13 +958,31 @@ function todayTouchedCount(shopList) {
   return shopList.filter((s) => shopActiveInRange(s, today, today)).length;
 }
 
-function groupMembersByTeam(members) {
+function groupMembersByTeam(members, profile, shops = []) {
   const sales = members.filter((m) => m.active && m.role !== 'manager');
+  const regionId = profile?.role === 'manager' ? normalizeTeamId(profile.team_id) : '';
+  const scoped = regionId ? sales.filter((m) => normalizeTeamId(m.team_id) === regionId) : sales;
+  if (regionId === 'florida') {
+    return FLORIDA_AREAS
+      .map((area) => ({
+        teamId: area.id,
+        label: area.label,
+        members: scoped.filter((m) => memberAreaId(m, shops) === area.id),
+      }))
+      .filter((g) => g.members.length);
+  }
+  if (regionId) {
+    return [{
+      teamId: regionId,
+      label: TEAM_LABEL[regionId],
+      members: scoped,
+    }].filter((g) => g.members.length);
+  }
   return TEAM_ORDER
     .map((teamId) => ({
       teamId,
       label: TEAM_LABEL[teamId],
-      members: sales.filter((m) => normalizeTeamId(m.team_id) === teamId),
+      members: scoped.filter((m) => normalizeTeamId(m.team_id) === teamId),
     }))
     .filter((g) => g.members.length);
 }
@@ -683,26 +1015,13 @@ function hasTrafficNoteOn(shop, dateKey) {
   return normalizeTrafficNotes(shop).some((n) => n.date === dateKey && n.text);
 }
 
-function buildDailyReportText(shopList) {
-  const today = todayDateKey();
-  const newShops = shopList.filter((s) => isNewVisitToday(s, today));
-  const revisitShops = shopList.filter((s) => (
-    !isNewVisitToday(s, today) && hasTrafficNoteOn(s, today)
-  ));
-  const newAPlusCount = newShops.filter((s) => isTierAPlus(s.tier)).length;
-  const testCaseCount = shopList.filter((s) => placedToday(s, 'test_case', today)).length;
-  const sampleCount = shopList.filter((s) => placedToday(s, 'sample', today)).length;
-  const totalUnits = shopList.reduce((sum, s) => sum + unitsInRange(s, today, today), 0);
-  return [
-    `日期：${today}`,
-    `新店：${newShops.length}`,
-    `新店中 A 级及以上：${newAPlusCount}`,
-    `回访：${revisitShops.length}`,
-    `样机投放数量：${sampleCount || ''}`,
-    `试抽盒投放数量：${testCaseCount || ''}`,
-    `卖进总支数：${totalUnits || ''}`,
-    `遇到的问题：`,
-  ].join('\n');
+function buildDailyReportText(shopList, start = todayDateKey(), end = start) {
+  const metrics = computeDailyReportMetrics(shopList, start, end);
+  const lines = [start === end ? `日期：${start}` : `日期：${start} 至 ${end}`];
+  DAILY_METRIC_ROWS.forEach((row) => {
+    lines.push(`${row.label}：${metrics[row.key] ?? 0}`);
+  });
+  return lines.join('\n');
 }
 
 const CSV_EXPORT_HEADERS = [
@@ -841,6 +1160,120 @@ function downloadTextFile(filename, content) {
   URL.revokeObjectURL(url);
 }
 
+function dailyPersonLabel(person, people) {
+  const dup = people.filter((p) => p.name === person.name).length > 1;
+  if (dup && person.teamLabel) return `${person.name}（${person.teamLabel}）`;
+  return person.name;
+}
+
+function buildDailyPeopleColumns(shops, members, dateKey, profile) {
+  const day = calendarDateKey(dateKey);
+  if (!day) return [];
+  return buildPeopleMetricColumns(shops, members, profile, (shopList) => (
+    computeDailyReportMetrics(shopList, day, day)
+  ));
+}
+
+function dailyMetricCell(metrics, row) {
+  if (row?.blank || row?.key === 'saDisplayCard' || row?.key === 'abDisplayCard') return '';
+  const key = typeof row === 'string' ? row : row?.key;
+  return metrics?.[key] ?? 0;
+}
+
+function buildDailySummaryCsv(columns, dateKey) {
+  const header = ['指标', ...columns.map((col) => col.name)].map(csvEscape).join(',');
+  const rows = DAILY_METRIC_ROWS.map((row) => (
+    [row.label, ...columns.map((col) => dailyMetricCell(col.metrics, row))].map(csvEscape).join(',')
+  ));
+  return [`日期,${csvEscape(dateKey)}`, header, ...rows].join('\r\n') + '\r\n';
+}
+
+const CUMULATIVE_METRIC_ROWS = [
+  { key: 'totalShops', label: '总店铺数' },
+  { key: 'soldInShops', label: '总卖进店铺数量' },
+  { key: 'entryRate', label: '进店率' },
+  { key: 'sCount', label: 'S级店铺数' },
+  { key: 'sSoldIn', label: 'S级店铺卖进' },
+  { key: 'aPlusCount', label: 'A+级店铺数' },
+  { key: 'aPlusSoldIn', label: 'A+级店铺卖进' },
+  { key: 'abCount', label: 'A/B级店铺数' },
+  { key: 'abSoldIn', label: 'A/B级店铺卖进' },
+];
+
+function shopSoldInCumulative(shop) {
+  if (shop?.status === 'visited') return true;
+  if (shop?.wholesale_in_store || calendarDateKey(shop?.wholesale_found_on)) return true;
+  return normalizeUnitsLog(shop).some((e) => (Number(e.units) || 0) > 0);
+}
+
+function isTierAPlusOnly(tier) {
+  return tier === 'A+';
+}
+
+function computeCumulativeReportMetrics(shopList) {
+  const totalShops = shopList.length;
+  const soldInShops = shopList.filter(shopSoldInCumulative).length;
+  const sShops = shopList.filter((s) => isTierS(s.tier));
+  const aPlusShops = shopList.filter((s) => isTierAPlusOnly(s.tier));
+  const abShops = shopList.filter((s) => isTierAB(s.tier));
+  return {
+    totalShops,
+    soldInShops,
+    entryRate: pct(soldInShops, totalShops),
+    sCount: sShops.length,
+    sSoldIn: sShops.filter(shopSoldInCumulative).length,
+    aPlusCount: aPlusShops.length,
+    aPlusSoldIn: aPlusShops.filter(shopSoldInCumulative).length,
+    abCount: abShops.length,
+    abSoldIn: abShops.filter(shopSoldInCumulative).length,
+  };
+}
+
+function buildPeopleMetricColumns(shops, members, profile, metricsForShops) {
+  const sales = profile?.role === 'manager'
+    ? members.filter((m) => m.active && m.role !== 'manager' && normalizeTeamId(m.team_id) === normalizeTeamId(profile.team_id))
+    : members.filter((m) => m.id === profile?.id);
+  const listed = new Set();
+  const people = [];
+  const pushMember = (m) => {
+    if (!m?.id || listed.has(m.id)) return;
+    listed.add(m.id);
+    const teamId = normalizeTeamId(m.team_id);
+    const areaId = memberAreaId(m, shops);
+    people.push({
+      id: m.id,
+      name: memberName(m),
+      teamId,
+      teamLabel: areaLabelOf(areaId) || teamLabelOf(teamId),
+      metrics: metricsForShops(shops.filter((s) => s.assigned_to === m.id)),
+    });
+  };
+  const regionId = normalizeTeamId(profile?.team_id);
+  if (regionId === 'florida') {
+    FLORIDA_AREAS.forEach((area) => {
+      sales.filter((m) => memberAreaId(m, shops) === area.id).forEach(pushMember);
+    });
+  }
+  sales.forEach(pushMember);
+  return people.map((person) => ({
+    id: person.id,
+    name: dailyPersonLabel(person, people),
+    metrics: person.metrics,
+  }));
+}
+
+function buildCumulativePeopleColumns(shops, members, profile) {
+  return buildPeopleMetricColumns(shops, members, profile, computeCumulativeReportMetrics);
+}
+
+function buildCumulativeSummaryCsv(columns) {
+  const header = ['指标', ...columns.map((col) => col.name)].map(csvEscape).join(',');
+  const rows = CUMULATIVE_METRIC_ROWS.map((row) => (
+    [row.label, ...columns.map((col) => dailyMetricCell(col.metrics, row))].map(csvEscape).join(',')
+  ));
+  return [`范围,从开始至今`, header, ...rows].join('\r\n') + '\r\n';
+}
+
 function sortShops(list, sortBy) {
   const items = [...list];
   switch (sortBy) {
@@ -907,6 +1340,7 @@ function shopFromSnap(item) {
     path_owner: pathOwner,
     assigned_to: pathOwner || data.assigned_to,
     team_id: normalizeTeamId(data.team_id) || String(data.team_id || '').trim(),
+    area_id: normalizeAreaId(data.area_id || data.team_id, data.city),
   };
 }
 
@@ -933,7 +1367,10 @@ async function ensureProfile(user) {
   } catch {
     snap = null;
   }
-  if (snap?.exists()) return { ...snap.data(), id: snap.id };
+  if (snap?.exists()) {
+    const data = snap.data();
+    return { ...data, id: snap.id, team_id: normalizeTeamId(data.team_id) || data.team_id, area_id: normalizeAreaId(data.area_id || data.team_id, data.city) };
+  }
 
   if (!teamId) return { needsRegion: true };
 
@@ -1015,7 +1452,10 @@ async function fetchTeamData(currentUser) {
       memberSnap = await getDocs(query(collection(db, 'profiles'), where('team_id', '==', p.team_id)));
     }
     members = memberSnap.docs
-      .map((item) => ({ id: item.id, ...item.data() }))
+      .map((item) => {
+        const data = item.data();
+        return { id: item.id, ...data, team_id: normalizeTeamId(data.team_id) || data.team_id, area_id: normalizeAreaId(data.area_id || data.team_id, data.city) };
+      })
       .sort((a, b) => (a.full_name || a.email || '').localeCompare(b.full_name || b.email || ''));
   }
 
@@ -1266,7 +1706,7 @@ function RegionGate({ user, onDone }) {
     <main className="login">
       <form className="panel" onSubmit={submit}>
         <h1>选择地区</h1>
-        <p>首次登录请选择 Tampa、Orlando 或 Texas</p>
+        <p>首次登录请选择 {teamChoiceHint()}</p>
         <label>
           地区
           <select value={teamId} onChange={(e) => setTeamId(e.target.value)} required>
@@ -1308,6 +1748,8 @@ export default function App() {
   const [dashFrom, setDashFrom] = useState(() => monthStartKey());
   const [dashTo, setDashTo] = useState(() => todayDateKey());
   const [dashTierFilter, setDashTierFilter] = useState('all');
+  const [dashTab, setDashTab] = useState('stats');
+  const [dailyDate, setDailyDate] = useState(() => todayDateKey());
   const [dailyReportText, setDailyReportText] = useState('');
   const [dailyCopied, setDailyCopied] = useState(false);
   const [selected, setSelected] = useState(null);
@@ -1384,32 +1826,34 @@ export default function App() {
       return undefined;
     }
     let cancelled = false;
+    const attempted = new Set();
     (async () => {
       while (!cancelled) {
-        const pending = shopsRef.current.filter(needsGeocode);
+        const pending = shopsRef.current.filter((s) => {
+          if (attempted.has(s.id)) return false;
+          const { state } = resolveCityContext(s);
+          return needsGeocode(s, { state });
+        });
         if (!pending.length) {
           if (!cancelled) setGeocodeNote('');
           break;
         }
         setGeocodeNote(`正在按地址重新定位 ${pending.length} 家…`);
         const shop = pending[0];
-        const { pool, fallback, state } = resolveCityContext(shop);
-        const queryText = geocodeQuery(shop, { state });
-        const detectedCity = detectCityFromAddress(shop.address, { fallback, knownCities: pool, state });
+        attempted.add(shop.id);
+        const { pool, state } = resolveCityContext(shop);
         let coords = null;
         try {
-          coords = await geocodeAddress(queryText, shop, { knownCities: pool, state });
+          coords = await geocodeAddress(geocodeQuery(shop, { state }), shop, { knownCities: pool, state });
         } catch {
           coords = null;
         }
         if (cancelled) return;
-        const resolvedCity = coords?.city || detectedCity;
-        const cityPatch = resolvedCity && resolvedCity !== shop.city ? { city: resolvedCity } : {};
+        const queryText = geocodeQuery(shop, { state });
         const patch = coords
           ? {
             lat: coords.lat,
             lng: coords.lng,
-            ...cityPatch,
             geocode_query: queryText,
             geocode_failed: false,
             geocode_version: GEOCODE_VERSION,
@@ -1417,7 +1861,6 @@ export default function App() {
           : {
             lat: null,
             lng: null,
-            ...cityPatch,
             geocode_query: queryText,
             geocode_failed: true,
             geocode_version: GEOCODE_VERSION,
@@ -1439,6 +1882,42 @@ export default function App() {
       cancelled = true;
     };
   }, [user, shops.length]);
+
+  useEffect(() => {
+    if (!user) return undefined;
+    const today = todayDateKey();
+    const overdue = shops.filter((s) => isNextPlanOverdue(s, today));
+    if (!overdue.length) return undefined;
+    let cancelled = false;
+    setShops((prev) => prev.map((s) => (
+      isNextPlanOverdue(s, today) ? { ...s, ...CLEARED_NEXT_PLAN } : s
+    )));
+    setDraft((d) => (d && isNextPlanOverdue(d, today) ? { ...d, ...CLEARED_NEXT_PLAN } : d));
+    (async () => {
+      const chunkSize = 400;
+      for (let i = 0; i < overdue.length; i += chunkSize) {
+        if (cancelled) return;
+        const chunk = overdue.slice(i, i + chunkSize);
+        const batch = writeBatch(db);
+        let writes = 0;
+        chunk.forEach((shop) => {
+          const owner = shop.path_owner || shop.assigned_to;
+          if (!owner) return;
+          batch.update(shopDoc(owner, shop.id), CLEARED_NEXT_PLAN);
+          writes += 1;
+        });
+        if (!writes) continue;
+        try {
+          await batch.commit();
+        } catch {
+          // local state already cleared
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user, shops]);
 
   async function loadAll(currentUser = user) {
     if (!currentUser) return;
@@ -1470,7 +1949,7 @@ export default function App() {
     const todayPopup = todayPopupEntry(popups);
     const today = todayDateKey();
     setSelected(shop.id);
-    setDraft(applyAddressToDraft({
+    setDraft({
       ...shop,
       chain_total_stores: shop.chain_total_stores ?? '',
       chain_a_plus_count: shop.chain_a_plus_count ?? '',
@@ -1480,10 +1959,16 @@ export default function App() {
       starred: Boolean(shop.starred),
       test_case_placed: isPlaced(shop, 'test_case'),
       sample_placed: isPlaced(shop, 'sample'),
+      display_card_placed: isPlaced(shop, 'display_card'),
       test_case_placed_on: placementOn(shop, 'test_case'),
       sample_placed_on: placementOn(shop, 'sample'),
+      display_card_placed_on: placementOn(shop, 'display_card'),
       test_case_today: placedToday(shop, 'test_case', today),
       sample_today: placedToday(shop, 'sample', today),
+      display_card_today: placedToday(shop, 'display_card', today),
+      wholesale_found_on: localDateKeyFromTimestamp(shop.wholesale_found_on) || String(shop.wholesale_found_on || '').trim(),
+      wholesale_in_store: Boolean(shop.wholesale_in_store || shop.wholesale_found_on),
+      wholesale_today: (localDateKeyFromTimestamp(shop.wholesale_found_on) || String(shop.wholesale_found_on || '').trim()) === today,
       traffic_notes: notes,
       traffic_note: todayNoteText(notes),
       popup_notes: popups,
@@ -1491,9 +1976,12 @@ export default function App() {
       popup_flow: todayPopup.flow,
       popup_vape_buyers: todayPopup.vape_buyers,
       popup_vozol_buyers: todayPopup.vozol_buyers,
+      popup_kit_sold: todayPopup.kit_sold,
+      popup_pod_sold: todayPopup.pod_sold,
       units_log: normalizeUnitsLog(shop),
-      units_today: todayUnitsValue(normalizeUnitsLog(shop), today),
-    }, shop.address || ''));
+      units_kit_today: todayUnitsValue(normalizeUnitsLog(shop), today, 'kit'),
+      units_pod_today: todayUnitsValue(normalizeUnitsLog(shop), today, 'pod'),
+    });
     setReportText('');
     setCopied(false);
   }
@@ -1527,10 +2015,12 @@ export default function App() {
     };
   }
 
-  function applyAddressToDraft(draftLike, address) {
-    const { pool, fallback } = resolveCityContext(draftLike);
-    const city = detectCityFromAddress(address, { fallback, knownCities: pool, state });
-    return { ...draftLike, address, city };
+  function assignShopTo(draftLike, assigneeId) {
+    const nextTeam = normalizeTeamId(members.find((m) => m.id === assigneeId)?.team_id)
+      || normalizeTeamId(draftLike.team_id)
+      || normalizeTeamId(profile?.team_id);
+    const city = teamCityPool(nextTeam).includes(draftLike.city) ? draftLike.city : '';
+    return { ...draftLike, assigned_to: assigneeId, team_id: nextTeam, city };
   }
 
   function openNew() {
@@ -1538,6 +2028,7 @@ export default function App() {
     if (profile?.role === 'manager') {
       const member = members.find((m) => m.id === (focusedMemberId || profile.id));
       shop.assigned_to = member?.id || profile.id;
+      if (member?.team_id) shop.team_id = normalizeTeamId(member.team_id) || shop.team_id;
     }
     setSelected('new');
     setDraft(shop);
@@ -1568,18 +2059,22 @@ export default function App() {
       flow: draft.popup_flow,
       vape_buyers: draft.popup_vape_buyers,
       vozol_buyers: draft.popup_vozol_buyers,
+      kit_sold: draft.popup_kit_sold,
+      pod_sold: draft.popup_pod_sold,
     }, draft.popup_date || todayDateKey()));
     const testNext = nextPlacement(prevShop, draft.test_case_today, 'test_case');
     const sampleNext = nextPlacement(prevShop, draft.sample_today, 'sample');
-    const nextUnitsLog = mergeUnitsLog(normalizeUnitsLog(prevShop), draft.units_today);
+    const cardNext = nextPlacement(prevShop, draft.display_card_today, 'display_card');
+    const wholesaleOn = nextDatedFlag(prevShop.wholesale_found_on, draft.wholesale_today);
+    const nextUnitsLog = mergeUnitsLog(normalizeUnitsLog(prevShop), draft.units_kit_today, draft.units_pod_today);
     const payload = withoutUndefined({
       ...draft,
       name: draft.name.trim(),
       is_chain: Boolean(draft.is_chain),
       chain_total_stores: draft.is_chain ? chainStores : null,
       chain_a_plus_count: draft.is_chain ? chainAPlus : null,
-      next_plan_date: draft.next_plan_date || '',
-      next_plan_time: draft.next_plan_date ? (draft.next_plan_time || '') : '',
+      next_plan_date: isNextPlanOverdue(draft) ? '' : (draft.next_plan_date || ''),
+      next_plan_time: isNextPlanOverdue(draft) || !draft.next_plan_date ? '' : (draft.next_plan_time || ''),
       next_plan: nextPlanText,
       traffic_notes: nextNotes,
       traffic_note: nextNotes[0]?.text || '',
@@ -1589,19 +2084,29 @@ export default function App() {
       test_case_placed_on: testNext.on,
       sample_placed: sampleNext.placed,
       sample_placed_on: sampleNext.on,
+      display_card_placed: cardNext.placed,
+      display_card_placed_on: cardNext.on,
+      wholesale_found_on: wholesaleOn,
+      wholesale_in_store: Boolean(wholesaleOn),
     });
     delete payload.id;
     delete payload.created_at;
     delete payload.updated_at;
     delete payload.test_case_today;
     delete payload.sample_today;
+    delete payload.display_card_today;
+    delete payload.wholesale_today;
     delete payload.units_today;
+    delete payload.units_kit_today;
+    delete payload.units_pod_today;
     delete payload.popup_flow;
     delete payload.popup_vape_buyers;
     delete payload.popup_vozol_buyers;
+    delete payload.popup_kit_sold;
+    delete payload.popup_pod_sold;
     delete payload.popup_date;
-    const { pool, fallback, state } = resolveCityContext(payload);
-    payload.city = detectCityFromAddress(payload.address, { fallback, knownCities: pool, state });
+    payload.city = String(payload.city || '').trim();
+    const { pool, state } = resolveCityContext(payload);
     setSaving(true);
     try {
       const geoQuery = geocodeQuery(payload, { state });
@@ -1617,7 +2122,6 @@ export default function App() {
         if (coords) {
           payload.lat = coords.lat;
           payload.lng = coords.lng;
-          if (coords.city) payload.city = coords.city;
           payload.geocode_query = geoQuery;
           payload.geocode_failed = false;
           payload.geocode_version = GEOCODE_VERSION;
@@ -1628,9 +2132,14 @@ export default function App() {
       const assigneeId = isManagerUser ? (draft.assigned_to || profile.id) : ownerId;
       const assigneeTeam = normalizeTeamId(members.find((m) => m.id === assigneeId)?.team_id)
         || normalizeTeamId(profile.team_id)
-        || 'orlando';
+        || 'florida';
       payload.assigned_to = assigneeId;
       payload.team_id = assigneeTeam;
+      if (assigneeTeam === 'florida') {
+        payload.area_id = cityToFloridaArea(payload.city)
+          || normalizeAreaId(members.find((m) => m.id === assigneeId)?.area_id)
+          || '';
+      }
       if (selected === 'new') {
         const ref = await addDoc(shopsCollection(ownerId), {
           ...payload,
@@ -1650,6 +2159,12 @@ export default function App() {
         payload.team_id = isManagerUser
           ? (normalizeTeamId(members.find((m) => m.id === newOwner)?.team_id) || normalizeTeamId(current?.team_id) || assigneeTeam)
           : (normalizeTeamId(current?.team_id) || assigneeTeam);
+        if (payload.team_id === 'florida') {
+          payload.area_id = cityToFloridaArea(payload.city)
+            || normalizeAreaId(members.find((m) => m.id === payload.assigned_to)?.area_id)
+            || current?.area_id
+            || '';
+        }
         if (isManagerUser && newOwner !== pathOwner) {
           const oldRef = shopDoc(pathOwner, selected);
           const newRef = shopDoc(newOwner, selected);
@@ -1678,6 +2193,8 @@ export default function App() {
             await setDoc(doc(shopDoc(newOwner, selected), 'visits', todayUnitsEntry.date), {
               date: todayUnitsEntry.date,
               units: todayUnitsEntry.units,
+              kit: todayUnitsEntry.kit,
+              pod: todayUnitsEntry.pod,
               updated_at: serverTimestamp(),
             }, { merge: true });
           } catch {
@@ -1720,13 +2237,18 @@ export default function App() {
       ['进货情况', draft.restock_status],
       ['是否放 Test Case', draft.test_case_today ? '是' : '否'],
       ['是否放 sample', draft.sample_today ? '是' : '否'],
-      ['今日卖进数量', draft.units_today || ''],
+      ['是否放硬台卡', draft.display_card_today ? '是' : '否'],
+      ['今日发现批发进店', draft.wholesale_today ? '是' : '否'],
+      ['今日卖进 KIT', draft.units_kit_today || ''],
+      ['今日卖进 POD', draft.units_pod_today || ''],
       ['热卖品牌明细', draft.brands_note],
       ['备注', draft.traffic_note],
       ['POP UP 情况', formatPopupNoteText({
         flow: draft.popup_flow,
         vape_buyers: draft.popup_vape_buyers,
         vozol_buyers: draft.popup_vozol_buyers,
+        kit_sold: draft.popup_kit_sold,
+        pod_sold: draft.popup_pod_sold,
       })],
       ['下次拜访计划', formatNextPlan(draft)],
     ]
@@ -1784,12 +2306,20 @@ export default function App() {
     }
   }
 
+  const myShops = useMemo(() => {
+    if (profile?.role === 'manager') {
+      const region = normalizeTeamId(profile.team_id);
+      return shops.filter((s) => shopTeamOf(s, members) === region);
+    }
+    return shops.filter((s) => s.assigned_to === profile?.id);
+  }, [shops, members, profile]);
+
   const filtered = useMemo(() => {
-    const matched = applyShopFilters(shops, {
+    const matched = applyShopFilters(myShops, {
       search, fTier, fStatus, fStarred, fCity, fSample, fTestCase, fAssignee, fCooperation, fSoldIn,
     });
     return sortShops(matched, sortBy);
-  }, [shops, search, sortBy, fTier, fStatus, fStarred, fCity, fSample, fTestCase, fAssignee, fCooperation, fSoldIn]);
+  }, [myShops, search, sortBy, fTier, fStatus, fStarred, fCity, fSample, fTestCase, fAssignee, fCooperation, fSoldIn]);
 
   const visibleShops = useMemo(() => {
     if (view === 'list' && profile?.role === 'manager' && focusedMemberId) {
@@ -1798,7 +2328,7 @@ export default function App() {
     return filtered;
   }, [view, profile, focusedMemberId, filtered]);
 
-  const memberGroups = useMemo(() => groupMembersByTeam(members), [members]);
+  const memberGroups = useMemo(() => groupMembersByTeam(members, profile, myShops), [members, profile, myShops]);
   const focusedMember = useMemo(
     () => members.find((m) => m.id === focusedMemberId) || null,
     [members, focusedMemberId],
@@ -1816,13 +2346,8 @@ export default function App() {
   }, [visibleShops, exportOwner, exportDateKey, exportMode, exportDate]);
 
   const teamCities = useMemo(() => (
-    [...new Set(shops.map((s) => s.city).filter(Boolean))].sort((a, b) => a.localeCompare(b))
-  ), [shops]);
-
-  const myShops = useMemo(() => {
-    if (profile?.role === 'manager') return shops;
-    return shops.filter((s) => s.assigned_to === profile?.id);
-  }, [shops, profile]);
+    [...new Set(myShops.map((s) => s.city).filter(Boolean))].sort((a, b) => a.localeCompare(b))
+  ), [myShops]);
 
   const dashboardRows = useMemo(() => {
     const start = dashFrom;
@@ -1830,21 +2355,32 @@ export default function App() {
     if (!start || !end || start > end) return { mine: null, regions: [] };
 
     if (profile?.role === 'manager') {
-      const sales = members.filter((m) => m.active && m.role !== 'manager');
-      const regions = TEAM_ORDER.map((teamId) => {
-        const allRegionShops = shops.filter((s) => shopTeamOf(s, members) === teamId);
+      const regionId = normalizeTeamId(profile.team_id);
+      const sales = members.filter((m) => m.active && m.role !== 'manager' && normalizeTeamId(m.team_id) === regionId);
+      const regions = dashboardSectionsFor(regionId).map((section) => {
+        const allRegionShops = myShops.filter((s) => {
+          if (section.id === 'tampa' || section.id === 'orlando') {
+            return shopAreaId(s, members) === section.id;
+          }
+          return true;
+        });
         const regionShops = filterShopsByTier(allRegionShops, dashTierFilter);
-        const regionMembers = sales.filter((m) => normalizeTeamId(m.team_id) === teamId);
+        const regionMembers = sales.filter((m) => {
+          if (section.id === 'tampa' || section.id === 'orlando') {
+            return memberAreaId(m, myShops) === section.id;
+          }
+          return true;
+        });
         return {
-          teamId,
-          label: TEAM_LABEL[teamId],
+          teamId: section.id,
+          label: section.label,
           metrics: computeAreaMetrics(regionShops, start, end, regionMembers.length),
           tierBreakdown: computeTierBreakdown(allRegionShops, start, end),
           rows: regionMembers.map((m) => ({
             id: m.id,
             name: memberName(m),
             ...computeAreaMetrics(
-              filterShopsByTier(shops.filter((s) => s.assigned_to === m.id), dashTierFilter),
+              filterShopsByTier(myShops.filter((s) => s.assigned_to === m.id), dashTierFilter),
               start,
               end,
               1,
@@ -1866,6 +2402,16 @@ export default function App() {
     if (!start || !end || start > end) return null;
     return computeAreaMetrics(shops.filter((s) => s.assigned_to === focusedMember.id), start, end);
   }, [focusedMember, shops, dashFrom, dashTo]);
+
+  const dailyPeopleColumns = useMemo(
+    () => buildDailyPeopleColumns(myShops, members, dailyDate, profile),
+    [myShops, members, dailyDate, profile],
+  );
+
+  const cumulativePeopleColumns = useMemo(
+    () => buildCumulativePeopleColumns(myShops, members, profile),
+    [myShops, members, profile],
+  );
 
   const draftNoteHistory = draft ? historyNotes(normalizeTrafficNotes(draft)) : [];
   const mappedCount = visibleShops.filter(shopHasCoords).length;
@@ -2017,7 +2563,7 @@ export default function App() {
             ))}
             {s.brands_note && <p>{s.brands_note}</p>}
             {formatNextPlan(s) && <p className="next">下次：{formatNextPlan(s)}</p>}
-            {!formatNextPlan(s) && s.next_plan && <p className="next">下次：{s.next_plan}</p>}
+            {!formatNextPlan(s) && s.next_plan && !isNextPlanOverdue(s) && <p className="next">下次：{s.next_plan}</p>}
           </article>
         ))}
       </section>
@@ -2073,9 +2619,7 @@ export default function App() {
         <div className="app-brand">
           <h1>门店拜访清单</h1>
           <span>
-            {profile?.role === 'manager'
-              ? TEAM_SUBTITLE
-              : (teamLabelOf(profile?.team_id) || 'Orlando')}
+            {teamLabelOf(profile?.team_id) || 'Florida'}
           </span>
         </div>
         <nav className="app-tabs" aria-label="页面切换">
@@ -2117,7 +2661,7 @@ export default function App() {
                   onClick={() => setFocusedMemberId('')}
                 >
                   <span>全部成员</span>
-                  <small>{shops.length} 家</small>
+                  <small>{myShops.length} 家</small>
                 </button>
                 {memberGroups.map((g) => (
                   <div className="member-group" key={g.teamId || 'none'}>
@@ -2155,14 +2699,12 @@ export default function App() {
                   <textarea
                     value={dailyReportText}
                     onChange={(e) => setDailyReportText(e.target.value)}
-                    placeholder={'点击「生成今日汇报」自动填充，可在此编辑\n\n日期：\n新店：\n新店中 A 级及以上：\n回访：\n样机投放数量：\n试抽盒投放数量：\n卖进总支数：\n遇到的问题：'}
+                    placeholder="点上方「生成今日汇报」填入今日数据，也可直接在此输入、复制"
                     rows={10}
                   />
-                  {dailyReportText && (
-                    <button type="button" onClick={copyDailyReport}>
-                      <Copy size={14} />{dailyCopied ? '已复制' : '复制汇报'}
-                    </button>
-                  )}
+                  <button type="button" onClick={copyDailyReport} disabled={!dailyReportText}>
+                    <Copy size={14} />{dailyCopied ? '已复制' : '复制汇报'}
+                  </button>
                 </section>
                 <button className="primary daily-report-launch" type="button" onClick={openDailyReport}>
                   <Clipboard size={15} />生成今日汇报
@@ -2212,8 +2754,8 @@ export default function App() {
                   statusLabels={STATUS}
                   onHover={setHoveredShopId}
                   onOpen={openShop}
-                  fallbackCenter={(TEAM_MAP_VIEW[normalizeTeamId(profile?.team_id)] || TEAM_MAP_VIEW.orlando).center}
-                  fallbackZoom={(TEAM_MAP_VIEW[normalizeTeamId(profile?.team_id)] || TEAM_MAP_VIEW.orlando).zoom}
+                  fallbackCenter={teamMapViewOf(profile?.team_id).center}
+                  fallbackZoom={teamMapViewOf(profile?.team_id).zoom}
                 />
               </React.Suspense>
             </div>
@@ -2222,16 +2764,48 @@ export default function App() {
       )}
       {view === 'dashboard' && (
         <div className="dashboard-page">
-          <DashboardPanel
-            profile={profile}
-            dashFrom={dashFrom}
-            dashTo={dashTo}
-            dashTierFilter={dashTierFilter}
-            onTierFilterChange={setDashTierFilter}
-            onFromChange={setDashFrom}
-            onToChange={setDashTo}
-            dashboardRows={dashboardRows}
-          />
+          <nav className="app-tabs dashboard-subtabs" aria-label="看板切换">
+            <button type="button" className={dashTab === 'stats' ? 'on' : ''} onClick={() => setDashTab('stats')}>
+              看板统计
+            </button>
+            <button type="button" className={dashTab === 'daily' ? 'on' : ''} onClick={() => setDashTab('daily')}>
+              日总结
+            </button>
+            <button type="button" className={dashTab === 'cumulative' ? 'on' : ''} onClick={() => setDashTab('cumulative')}>
+              累积总结
+            </button>
+          </nav>
+          {dashTab === 'daily' ? (
+            <DailySummaryPanel
+              dateKey={dailyDate}
+              onDateChange={setDailyDate}
+              columns={dailyPeopleColumns}
+              onExport={() => {
+                const day = calendarDateKey(dailyDate);
+                if (!day || !dailyPeopleColumns.length) return;
+                downloadTextFile(`日总结_${day}.csv`, buildDailySummaryCsv(dailyPeopleColumns, day));
+              }}
+            />
+          ) : dashTab === 'cumulative' ? (
+            <CumulativeSummaryPanel
+              columns={cumulativePeopleColumns}
+              onExport={() => {
+                if (!cumulativePeopleColumns.length) return;
+                downloadTextFile('累积总结_从开始至今.csv', buildCumulativeSummaryCsv(cumulativePeopleColumns));
+              }}
+            />
+          ) : (
+            <DashboardPanel
+              profile={profile}
+              dashFrom={dashFrom}
+              dashTo={dashTo}
+              dashTierFilter={dashTierFilter}
+              onTierFilterChange={setDashTierFilter}
+              onFromChange={setDashFrom}
+              onToChange={setDashTo}
+              dashboardRows={dashboardRows}
+            />
+          )}
         </div>
       )}
       {draft && (
@@ -2255,16 +2829,29 @@ export default function App() {
             </div>
             <div className="grid">
               <Field label="店铺名称"><input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></Field>
+              <Field label="城市">
+                <select
+                  value={draft.city || ''}
+                  onChange={(e) => setDraft({ ...draft, city: e.target.value })}
+                >
+                  <option value="">请选择城市</option>
+                  {citySelectOptions(
+                    members.find((m) => m.id === (draft.assigned_to || profile?.id))?.team_id
+                      || draft.team_id
+                      || profile?.team_id,
+                    draft.city,
+                  ).map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+              </Field>
               <div className="field wide">
                 <span>地址</span>
                 <input
                   value={draft.address}
-                  onChange={(e) => setDraft(applyAddressToDraft(draft, e.target.value))}
-                  placeholder="填写完整地址，城市将自动识别"
+                  onChange={(e) => setDraft({ ...draft, address: e.target.value })}
+                  placeholder="填写完整地址"
                 />
-                {draft.city && (
-                  <small className="hint">识别城市：{draft.city}</small>
-                )}
               </div>
               <div className="field wide">
                 <span>是否连锁店</span>
@@ -2336,21 +2923,44 @@ export default function App() {
                 draft={draft}
                 onChange={(todayYes) => setDraft({ ...draft, sample_today: todayYes })}
               />
-              <Field label="今日卖进数量（支）">
+              <PlacementField
+                label="是否放硬台卡"
+                kind="display_card"
+                draft={draft}
+                onChange={(todayYes) => setDraft({ ...draft, display_card_today: todayYes })}
+              />
+              <DatedFlagField
+                label="今日发现批发进店"
+                todayYes={Boolean(draft.wholesale_today)}
+                storedOn={draft.wholesale_found_on}
+                yesLabel="是（今天发现）"
+                onChange={(todayYes) => setDraft({ ...draft, wholesale_today: todayYes })}
+              />
+              <Field label="今日卖进数量-KIT">
                 <input
                   type="number"
                   min="0"
                   step="1"
-                  placeholder="填写今天卖进支数，隔天可重新填写"
-                  value={draft.units_today}
-                  onChange={(e) => setDraft({ ...draft, units_today: e.target.value })}
+                  placeholder="今天卖进 KIT 支数"
+                  value={draft.units_kit_today || ''}
+                  onChange={(e) => setDraft({ ...draft, units_kit_today: e.target.value })}
+                />
+              </Field>
+              <Field label="今日卖进数量-POD">
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  placeholder="今天卖进 POD 支数"
+                  value={draft.units_pod_today || ''}
+                  onChange={(e) => setDraft({ ...draft, units_pod_today: e.target.value })}
                 />
               </Field>
               {profile?.role === 'manager' && (
                 <Field label="负责人">
                   <select
                     value={draft.assigned_to || profile.id}
-                    onChange={(e) => setDraft(applyAddressToDraft({ ...draft, assigned_to: e.target.value }, draft.address))}
+                    onChange={(e) => setDraft(assignShopTo(draft, e.target.value))}
                   >
                     {memberGroups.map((g) => (
                       <optgroup key={g.teamId || 'none'} label={g.label}>
@@ -2409,6 +3019,7 @@ export default function App() {
                 <div className="date-row">
                   <input
                     type="date"
+                    min={todayDateKey()}
                     value={draft.next_plan_date || ''}
                     onChange={(e) => setDraft({
                       ...draft,
@@ -2593,14 +3204,12 @@ export default function App() {
               <textarea
                 value={dailyReportText}
                 onChange={(e) => setDailyReportText(e.target.value)}
-                placeholder={'点击「重新生成」自动填充，可在此编辑\n\n日期：\n新店：\n新店中 A 级及以上：\n回访：\n样机投放数量：\n试抽盒投放数量：\n卖进总支数：\n遇到的问题：'}
+                placeholder="点上方「重新生成」填入今日数据，也可直接在此输入、复制"
                 rows={12}
               />
-              {dailyReportText && (
-                <button type="button" onClick={copyDailyReport}>
-                  <Copy size={14} />{dailyCopied ? '已复制' : '复制汇报'}
-                </button>
-              )}
+              <button type="button" onClick={copyDailyReport} disabled={!dailyReportText}>
+                <Copy size={14} />{dailyCopied ? '已复制' : '复制汇报'}
+              </button>
             </div>
           </div>
         </div>
@@ -2687,11 +3296,6 @@ function DashboardPanel({
       <div className="dashboard-head">
         <div>
           <h2>{isManager ? '地区看板' : '我的区域看板'}</h2>
-          <p>
-            {isManager
-              ? `Mapping 完成比例按销售人数 × ${MAPPING_TARGET} 家为分母`
-              : `Mapping 完成比例以 ${MAPPING_TARGET} 家门店为分母`}
-          </p>
         </div>
         <div className="dashboard-controls">
           {isManager && (
@@ -2723,7 +3327,7 @@ function DashboardPanel({
           <div className="dashboard-region" key={region.teamId || region.label}>
             <h3 className="dashboard-section-title">{region.label}</h3>
             <AreaMetricsGrid metrics={region.metrics} className="metrics-grid team-summary" />
-            {dashTierFilter === 'all' && (
+            {dashTierFilter === 'all' && region.tierBreakdown && (
               <div className="tier-breakdown">
                 <TierMetricsPanel title="S 级" metrics={region.tierBreakdown.s} />
                 <TierMetricsPanel title="A / A+ 级" metrics={region.tierBreakdown.aa} />
@@ -2767,6 +3371,90 @@ function PersonDashboardStrip({ name, teamLabel, dashFrom, dashTo, onFromChange,
       </div>
       <AreaMetricsGrid metrics={metrics} visitedLabel="跑店数" />
     </section>
+  );
+}
+
+function DailySummaryPanel({ dateKey, onDateChange, columns, onExport }) {
+  const today = todayDateKey();
+  const day = calendarDateKey(dateKey);
+  return (
+    <section className="dashboard daily-summary">
+      <div className="dashboard-head">
+        <div>
+          <h2>日总结</h2>
+        </div>
+        <div className="dashboard-controls">
+          <div className="dashboard-range">
+            <label>
+              日期
+              <input type="date" value={day} onChange={(e) => onDateChange(e.target.value)} />
+            </label>
+          </div>
+          <button type="button" className={day === today ? 'dash-today-btn on' : 'dash-today-btn'} onClick={() => onDateChange(today)}>
+            今天
+          </button>
+          <button type="button" className="export-csv" onClick={onExport} disabled={!day || !columns.length}>
+            <Download size={15} />导出 CSV
+          </button>
+        </div>
+      </div>
+      {!day ? (
+        <p className="dashboard-empty">请选择日期</p>
+      ) : columns.length ? (
+        <MetricReportTable columns={columns} rows={DAILY_METRIC_ROWS} />
+      ) : (
+        <p className="dashboard-empty">暂无成员数据</p>
+      )}
+    </section>
+  );
+}
+
+function CumulativeSummaryPanel({ columns, onExport }) {
+  return (
+    <section className="dashboard daily-summary">
+      <div className="dashboard-head">
+        <div>
+          <h2>累积总结</h2>
+        </div>
+        <div className="dashboard-controls">
+          <button type="button" className="export-csv" onClick={onExport} disabled={!columns.length}>
+            <Download size={15} />导出 CSV
+          </button>
+        </div>
+      </div>
+      {columns.length ? (
+        <MetricReportTable columns={columns} rows={CUMULATIVE_METRIC_ROWS} />
+      ) : (
+        <p className="dashboard-empty">暂无成员数据</p>
+      )}
+    </section>
+  );
+}
+
+function MetricReportTable({ columns, rows }) {
+  return (
+    <div className="dashboard-table-wrap">
+      <table className="dashboard-table daily-report-table">
+        <thead>
+          <tr>
+            <th>指标</th>
+            {columns.map((col) => (
+              <th key={col.id}>{col.name}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.key}>
+              <th scope="row">{row.label}</th>
+              {columns.map((col) => (
+                <td key={col.id}>{dailyMetricCell(col.metrics, row)}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -3039,6 +3727,24 @@ function PlacementField({ label, kind, draft, onChange }) {
       <select value={draft[`${kind}_today`] ? 'yes' : 'no'} onChange={(e) => onChange(e.target.value === 'yes')}>
         <option value="no">否</option>
         <option value="yes">是（今天放）</option>
+      </select>
+    </div>
+  );
+}
+
+function DatedFlagField({ label, todayYes, storedOn, yesLabel = '是（今天）', onChange }) {
+  const today = todayDateKey();
+  const stored = localDateKeyFromTimestamp(storedOn) || String(storedOn || '').trim();
+  const hintDate = todayYes ? today : (stored && stored !== today ? stored : '');
+  const dateText = formatMonthDay(hintDate);
+  const hint = dateText ? `${dateText}已记录` : (stored && !todayYes ? '已记录' : '');
+  return (
+    <div className="field">
+      <span>{label}</span>
+      {hint && <div className="placed-hint">{hint}</div>}
+      <select value={todayYes ? 'yes' : 'no'} onChange={(e) => onChange(e.target.value === 'yes')}>
+        <option value="no">否</option>
+        <option value="yes">{yesLabel}</option>
       </select>
     </div>
   );

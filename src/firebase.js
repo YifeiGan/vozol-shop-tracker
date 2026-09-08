@@ -40,4 +40,4 @@ googleProvider.addScope('email');
 googleProvider.addScope('profile');
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 
-export const DEFAULT_TEAM_ID = 'orlando';
+export const DEFAULT_TEAM_ID = 'florida';

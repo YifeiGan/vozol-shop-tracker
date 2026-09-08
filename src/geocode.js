@@ -38,40 +38,111 @@ const CITY_ALIASES = {
   'ft worth': 'Fort Worth',
   'ft. worth': 'Fort Worth',
   'sugarland': 'Sugar Land',
+  'highlands ranch': 'Highlands Ranch',
+  'castle rock': 'Castle Rock',
+  'greenwood village': 'Greenwood Village',
+  'commerce city': 'Commerce City',
+  'wheat ridge': 'Wheat Ridge',
+  'lone tree': 'Lone Tree',
 };
 
-const STATE_BOUNDS = {
-  FL: { lat: [24.4, 31.1], lng: [-87.7, -79.9] },
-  TX: { lat: [25.8, 36.6], lng: [-106.7, -93.4] },
+const STATE_META = {
+  FL: {
+    names: ['Florida'],
+    bounds: { lat: [24.4, 31.1], lng: [-87.7, -79.9] },
+  },
+  TX: {
+    names: ['Texas'],
+    bounds: { lat: [25.8, 36.6], lng: [-106.7, -93.4] },
+  },
+  CO: {
+    names: ['Colorado'],
+    bounds: { lat: [36.9, 41.1], lng: [-109.1, -102.0] },
+  },
+  MI: {
+    names: ['Michigan'],
+    bounds: { lat: [41.6, 48.4], lng: [-90.5, -82.1] },
+  },
+  IL: {
+    names: ['Illinois'],
+    bounds: { lat: [36.9, 42.6], lng: [-91.6, -87.0] },
+  },
+  OH: {
+    names: ['Ohio'],
+    bounds: { lat: [38.3, 42.4], lng: [-84.9, -80.4] },
+  },
+  WI: {
+    names: ['Wisconsin'],
+    bounds: { lat: [42.4, 47.4], lng: [-93.0, -86.2] },
+  },
+  IN: {
+    names: ['Indiana'],
+    bounds: { lat: [37.7, 41.9], lng: [-88.2, -84.7] },
+  },
+  MN: {
+    names: ['Minnesota'],
+    bounds: { lat: [43.4, 49.5], lng: [-97.3, -89.4] },
+  },
+  GL: {
+    names: ['Great Lakes'],
+    bounds: { lat: [37.0, 49.5], lng: [-97.5, -74.0] },
+    skipAdmin: true,
+  },
 };
+const STATE_ABBRS = Object.keys(STATE_META).filter((abbr) => abbr !== 'GL');
+const STATE_ABBR_RE = new RegExp(`\\b(${STATE_ABBRS.join('|')})\\b`, 'i');
+const STATE_WORD_RE = new RegExp(
+  `\\b(${STATE_ABBRS.concat(STATE_ABBRS.flatMap((abbr) => STATE_META[abbr].names)).join('|')})\\b`,
+  'i',
+);
+const STATE_BEFORE_ZIP_RE = new RegExp(`\\s+(${STATE_ABBRS.join('|')})\\s+\\d{5}(?:-\\d{4})?.*$`, 'i');
+const CITY_BEFORE_STATE_ZIP_RE = new RegExp(
+  `\\s+([A-Za-z][\\w\\s.'-]+?)\\s+(${STATE_ABBRS.join('|')})\\s*,?\\s*\\d{5}(?:-\\d{4})?\\b`,
+  'i',
+);
+const INLINE_CITY_IN_STATE_PART_RE = new RegExp(`^(.+?)\\s+(${STATE_ABBRS.join('|')})\\b`, 'i');
+
+function statePattern(state) {
+  const abbr = STATE_META[state] ? state : 'FL';
+  const meta = STATE_META[abbr];
+  const words = [abbr, ...meta.names].map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  return new RegExp(`\\b(?:${words.join('|')})\\b`, 'i');
+}
 
 function stateFromAddress(address) {
   const raw = String(address || '');
-  if (/\bTX\b|\bTexas\b/i.test(raw)) return 'TX';
-  if (/\bFL\b|\bFlorida\b/i.test(raw)) return 'FL';
+  for (const abbr of STATE_ABBRS) {
+    if (statePattern(abbr).test(raw)) return abbr;
+  }
   return '';
 }
 
 export function resolveState(shop, options = {}) {
+  const fromText = stateFromAddress(shop?.address) || stateFromAddress(shop?.city);
+  if (fromText) return fromText;
   const explicit = String(options.state || '').trim().toUpperCase();
-  if (STATE_BOUNDS[explicit]) return explicit;
+  if (explicit && explicit !== 'GL' && STATE_META[explicit]) return explicit;
   const team = String(shop?.team_id || options.teamId || '').trim().toLowerCase();
+  if (team === 'denver' || team.includes('denver') || team.includes('colorado')) return 'CO';
   if (team === 'texas' || team.includes('texas')) return 'TX';
-  if (team === 'tampa' || team.includes('tampa') || team === 'orlando' || team.includes('orlando')) return 'FL';
-  return stateFromAddress(shop?.address) || 'FL';
+  if (
+    team === 'florida' || team.includes('florida')
+    || team === 'tampa' || team.includes('tampa')
+    || team === 'orlando' || team.includes('orlando')
+  ) return 'FL';
+  if (team === 'great_lakes' || team.includes('lakes') || team.includes('great lakes') || explicit === 'GL') {
+    return 'GL';
+  }
+  return 'FL';
 }
 
 function inState(lat, lng, state) {
-  const bounds = STATE_BOUNDS[state] || STATE_BOUNDS.FL;
+  const bounds = (STATE_META[state] || STATE_META.FL).bounds;
   return lat >= bounds.lat[0] && lat <= bounds.lat[1] && lng >= bounds.lng[0] && lng <= bounds.lng[1];
 }
 
-function statePattern(state) {
-  return state === 'TX' ? /\bTX\b|\bTexas\b/i : /\bFL\b|\bFlorida\b/i;
-}
-
 function normalizeCityToken(value, knownCities = []) {
-  const raw = String(value || '').trim().replace(/\s+(FL|TX)\s+\d{5}(?:-\d{4})?.*$/i, '').trim();
+  const raw = String(value || '').trim().replace(STATE_BEFORE_ZIP_RE, '').trim();
   if (!raw) return '';
   const key = raw.toLowerCase().replace(/\s+/g, ' ');
   if (CITY_ALIASES[key]) return CITY_ALIASES[key];
@@ -103,17 +174,17 @@ function cityRegionBeforeState(address) {
   if (!raw) return '';
 
   const parts = raw.split(',').map((part) => part.trim()).filter(Boolean);
-  const statePartIdx = parts.findIndex((part) => /\b(FL|TX|Florida|Texas)\b/i.test(part));
+  const statePartIdx = parts.findIndex((part) => STATE_WORD_RE.test(part));
   if (statePartIdx > 0) {
     const beforeState = parts[statePartIdx - 1];
-    if (/^\d/.test(beforeState) && /\b(FL|TX)\b/i.test(parts[statePartIdx])) {
-      const inline = parts[statePartIdx].match(/^(.+?)\s+(FL|TX)\b/i);
+    if (/^\d/.test(beforeState) && STATE_ABBR_RE.test(parts[statePartIdx])) {
+      const inline = parts[statePartIdx].match(INLINE_CITY_IN_STATE_PART_RE);
       if (inline?.[1]) return inline[1].trim();
     }
     return beforeState;
   }
 
-  const inline = raw.match(/\s+([A-Za-z][\w\s.'-]+?)\s+(FL|TX)\s*,?\s*\d{5}(?:-\d{4})?\b/i);
+  const inline = raw.match(CITY_BEFORE_STATE_ZIP_RE);
   if (inline) return inline[1].trim();
 
   return '';
@@ -162,8 +233,8 @@ export function geocodeQuery(shop, options = {}) {
   return address;
 }
 
-export function needsGeocode(shop) {
-  const query = geocodeQuery(shop);
+export function needsGeocode(shop, options = {}) {
+  const query = geocodeQuery(shop, options);
   if (!query) return false;
   const currentVersion = Number(shop.geocode_version) === GEOCODE_VERSION;
   if (shopHasCoords(shop) && shop.geocode_query === query && currentVersion) return false;
@@ -197,10 +268,13 @@ async function geocodeGoogle(shop, knownCities = [], options = {}) {
   const state = resolveState(shop, options);
   const parts = [address];
   if (city && !address.toLowerCase().includes(city.toLowerCase())) parts.push(city);
-  if (!statePattern(state).test(parts.join(' '))) parts.push(state);
+  if (state !== 'GL' && !statePattern(state).test(parts.join(' '))) parts.push(state);
+  const components = state === 'GL' || STATE_META[state]?.skipAdmin
+    ? 'country:US'
+    : `country:US|administrative_area:${state}`;
   const params = new URLSearchParams({
     address: parts.join(', '),
-    components: `country:US|administrative_area:${state}`,
+    components,
     key,
   });
   const data = await fetchJson(`https://maps.googleapis.com/maps/api/geocode/json?${params}`);
