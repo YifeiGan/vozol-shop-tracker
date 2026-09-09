@@ -226,7 +226,7 @@ function emptyShop(teamId) {
     next_plan_date: '', next_plan_time: '', source_url: '', starred: false,
   };
 }
-const MAX_TRAFFIC_NOTES = 2;
+const MAX_TRAFFIC_NOTES = 3;
 const MAX_POPUP_NOTES = 2;
 const POPUP_FIELDS = [
   { key: 'flow', draftKey: 'popup_flow', label: '1、人流情况' },
