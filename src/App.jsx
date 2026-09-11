@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Search, Plus, X, ExternalLink, LogOut, Save, Users, Clipboard, Copy, Star, Map, List, Eye, EyeOff, LayoutDashboard, SlidersHorizontal, Download,
+  Search, Plus, X, ExternalLink, LogOut, Save, Users, Clipboard, Copy, Star, Map, List, Eye, EyeOff, LayoutDashboard, SlidersHorizontal, Download, ChevronDown,
 } from 'lucide-react';
 import {
   createUserWithEmailAndPassword,
@@ -28,7 +28,7 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import { auth, configured, db, googleProvider } from './firebase';
-import { geocodeAddress, geocodeQuery, GEOCODE_VERSION, needsGeocode, shopHasCoords } from './geocode';
+import { detectCityFromAddress, geocodeAddress, geocodeQuery, GEOCODE_VERSION, needsGeocode, shopHasCoords } from './geocode';
 
 const ShopMap = React.lazy(() => import('./ShopMap'));
 
@@ -172,6 +172,7 @@ const STATUS = {
   follow_up: '需跟进',
   no_interest: '无意向/暂缓',
 };
+const WILLINGNESS_OPTIONS = ['高', '中', '低'];
 function defaultCity(teamId) {
   return TEAM_DEFAULT_CITY[normalizeTeamId(teamId)] || TEAM_DEFAULT_CITY.florida;
 }
@@ -186,13 +187,6 @@ function teamCityPool(teamId) {
 
 function teamMapViewOf(teamId) {
   return TEAM_MAP_VIEW[normalizeTeamId(teamId)] || TEAM_MAP_VIEW.florida;
-}
-
-function citySelectOptions(teamId, currentCity) {
-  const pool = teamCityPool(teamId);
-  const current = String(currentCity || '').trim();
-  if (current && !pool.includes(current)) return [current, ...pool];
-  return pool;
 }
 
 function mapsSearchHref(shop, teamId) {
@@ -211,14 +205,13 @@ function mapsSearchHref(shop, teamId) {
 
 function emptyShop(teamId) {
   return {
-    name: '', address: '', city: '', phone: '', tier: '', status: 'not_visited',
+    name: '', address: '', city: '', phone: '', tier: '', status: 'not_visited', willingness: '',
     team_id: normalizeTeamId(teamId) || '',
     is_chain: false, chain_name: '', chain_total_stores: '', chain_a_plus_count: '', staff_contact: '', owner_name: '',
     owner_schedule: '', contact_role: '', store_number: '', restock_status: '', distributor: '',
     test_case_placed: false, sample_placed: false, display_card_placed: false,
     test_case_placed_on: '', sample_placed_on: '', display_card_placed_on: '',
     test_case_today: false, sample_today: false, display_card_today: false,
-    wholesale_in_store: false, wholesale_found_on: '', wholesale_today: false,
     units_kit_today: '', units_pod_today: '',
     traffic_note: '', traffic_notes: [], brands_note: '', next_plan: '',
     popup_notes: [], popup_date: todayDateKey(), popup_flow: '', popup_vape_buyers: '', popup_vozol_buyers: '',
@@ -570,14 +563,6 @@ function nextPlacement(prevShop, todayYes, kind) {
   return { placed: prevPlaced, on: prevOn };
 }
 
-function nextDatedFlag(prevOn, todayYes) {
-  const today = todayDateKey();
-  const prev = localDateKeyFromTimestamp(prevOn) || String(prevOn || '').trim();
-  if (todayYes) return today;
-  if (prev === today) return '';
-  return prev;
-}
-
 function placedToday(shop, kind, today = todayDateKey()) {
   return placementOn(shop, kind) === today;
 }
@@ -754,6 +739,54 @@ function mergeUnitsLog(existingLog, kitText, podText) {
   return [{ date: today, units: kit + pod, kit, pod }, ...withoutToday].slice(0, 365);
 }
 
+function draftUnitsLogEntries(draft) {
+  return mergeUnitsLog(draft?.units_log, draft?.units_kit_today, draft?.units_pod_today)
+    .filter((e) => (Number(e.kit) || 0) > 0 || (Number(e.pod) || 0) > 0 || (Number(e.units) || 0) > 0);
+}
+
+function canEditUnitsLog(profile, user, shop, members = []) {
+  if (!profile || !shop) return false;
+  const uid = user?.uid || profile.id;
+  if (!uid) return false;
+  const ownerId = shop.path_owner || shop.assigned_to || '';
+  const assigneeId = shop.assigned_to || ownerId;
+  if (!ownerId && !assigneeId) return true;
+  if (profile.role === 'manager') {
+    const shopTeam = shopTeamOf(shop, members) || normalizeTeamId(shop.team_id);
+    return Boolean(shopTeam) && shopTeam === normalizeTeamId(profile.team_id);
+  }
+  return uid === ownerId || uid === assigneeId;
+}
+
+function withSyncedTodayUnits(draft, log) {
+  const today = todayDateKey();
+  const todayEntry = normalizeUnitsLog({ units_log: log }).find((e) => e.date === today);
+  return {
+    ...draft,
+    units_log: normalizeUnitsLog({ units_log: log }),
+    units_kit_today: todayEntry && (Number(todayEntry.kit) || 0) ? String(todayEntry.kit) : '',
+    units_pod_today: todayEntry && (Number(todayEntry.pod) || 0) ? String(todayEntry.pod) : '',
+  };
+}
+
+function applyUnitsLogEntry(draft, oldDate, next) {
+  const today = todayDateKey();
+  const nextDate = calendarDateKey(next?.date) || oldDate;
+  const kitRaw = String(next?.kit ?? '').trim();
+  const podRaw = String(next?.pod ?? '').trim();
+  const kit = kitRaw === '' ? 0 : Number(kitRaw);
+  const pod = podRaw === '' ? 0 : Number(podRaw);
+  let log = draftUnitsLogEntries(draft).filter((e) => e.date !== oldDate && e.date !== nextDate);
+  if (!Number.isNaN(kit) && !Number.isNaN(pod) && kit >= 0 && pod >= 0 && (kit > 0 || pod > 0) && nextDate) {
+    log = [{ date: nextDate, kit, pod, units: kit + pod }, ...log]
+      .sort((a, b) => String(b.date).localeCompare(String(a.date)))
+      .slice(0, 365);
+  }
+  const synced = withSyncedTodayUnits(draft, log);
+  if (oldDate === today || nextDate === today) return synced;
+  return { ...draft, units_log: synced.units_log };
+}
+
 function unitsInRange(shop, start, end, field = 'units') {
   return normalizeUnitsLog(shop)
     .filter((e) => isDateInRange(e.date, start, end))
@@ -861,7 +894,6 @@ const DAILY_METRIC_ROWS = [
   { key: 'saSoldIn', label: '自己卖进店铺数' },
   { key: 'saKit', label: '卖进数量-KIT' },
   { key: 'saPod', label: '卖进数量-POD' },
-  { key: 'saWholesale', label: '访店发现批发进店数' },
   { key: 'saPopup', label: '活动场次' },
   { key: 'saPopupKit', label: '活动卖出支数-KIT' },
   { key: 'saPopupPod', label: '活动卖出支数-POD' },
@@ -873,7 +905,6 @@ const DAILY_METRIC_ROWS = [
   { key: 'abSoldIn', label: '卖进店铺数' },
   { key: 'abKit', label: '卖进数量-KIT' },
   { key: 'abPod', label: '卖进数量-POD' },
-  { key: 'abWholesale', label: '访店发现批发进店数' },
   { key: 'abPopup', label: '活动场次' },
   { key: 'abPopupKit', label: '活动卖出支数-KIT' },
   { key: 'abPopupPod', label: '活动卖出支数-POD' },
@@ -883,9 +914,6 @@ const DAILY_METRIC_ROWS = [
 function computeGroupDayMetrics(shopList, start, end) {
   const worked = shopList.filter((s) => shopWorkedInRange(s, start, end));
   const soldIn = worked.filter((s) => unitsInRange(s, start, end) > 0).length;
-  const wholesale = worked.filter((s) => (
-    isDateInRange(s.wholesale_found_on, start, end)
-  )).length;
   return {
     visited: worked.length,
     testCase: worked.filter((s) => placementInRange(s, 'test_case', start, end)).length,
@@ -894,7 +922,6 @@ function computeGroupDayMetrics(shopList, start, end) {
     soldIn,
     kit: worked.reduce((sum, s) => sum + unitsInRange(s, start, end, 'kit'), 0),
     pod: worked.reduce((sum, s) => sum + unitsInRange(s, start, end, 'pod'), 0),
-    wholesale,
     popup: worked.reduce((sum, s) => sum + popupSessionsInRange(s, start, end), 0),
     popupKit: worked.reduce((sum, s) => sum + popupSoldInRange(s, start, end, 'kit'), 0),
     popupPod: worked.reduce((sum, s) => sum + popupSoldInRange(s, start, end, 'pod'), 0),
@@ -917,7 +944,6 @@ function computeDailyReportMetrics(shopList, start, end) {
     saSoldIn: sa.soldIn,
     saKit: sa.kit,
     saPod: sa.pod,
-    saWholesale: sa.wholesale,
     saPopup: sa.popup,
     saPopupKit: sa.popupKit,
     saPopupPod: sa.popupPod,
@@ -929,7 +955,6 @@ function computeDailyReportMetrics(shopList, start, end) {
     abSoldIn: ab.soldIn,
     abKit: ab.kit,
     abPod: ab.pod,
-    abWholesale: ab.wholesale,
     abPopup: ab.popup,
     abPopupKit: ab.popupKit,
     abPopupPod: ab.popupPod,
@@ -1016,12 +1041,27 @@ function hasTrafficNoteOn(shop, dateKey) {
 }
 
 function buildDailyReportText(shopList, start = todayDateKey(), end = start) {
-  const metrics = computeDailyReportMetrics(shopList, start, end);
-  const lines = [start === end ? `日期：${start}` : `日期：${start} 至 ${end}`];
-  DAILY_METRIC_ROWS.forEach((row) => {
-    lines.push(`${row.label}：${metrics[row.key] ?? 0}`);
-  });
-  return lines.join('\n');
+  const worked = shopList.filter((s) => shopWorkedInRange(s, start, end));
+  const newShops = worked.filter((s) => !hasHistoryBefore(s, start));
+  const revisit = worked.filter((s) => hasHistoryBefore(s, start)).length;
+  const newAPlus = newShops.filter((s) => isTierAPlus(s.tier)).length;
+  const sampleCount = shopList.filter((s) => placementInRange(s, 'sample', start, end)).length;
+  const testCaseCount = shopList.filter((s) => placementInRange(s, 'test_case', start, end)).length;
+  const kit = shopList.reduce((sum, s) => sum + unitsInRange(s, start, end, 'kit'), 0);
+  const pod = shopList.reduce((sum, s) => sum + unitsInRange(s, start, end, 'pod'), 0);
+  const dateLine = start === end ? `日期：${start}` : `日期：${start} 至 ${end}`;
+  return [
+    dateLine,
+    `新店：${newShops.length}`,
+    `新店中 A 级及以上：${newAPlus}`,
+    `回访：${revisit}`,
+    `样机投放数量：${sampleCount}`,
+    `试抽盒投放数量：${testCaseCount}`,
+    `卖进 KIT：${kit}`,
+    `卖进 POD：${pod}`,
+    '遇到的问题',
+    '',
+  ].join('\n');
 }
 
 const CSV_EXPORT_HEADERS = [
@@ -1166,11 +1206,12 @@ function dailyPersonLabel(person, people) {
   return person.name;
 }
 
-function buildDailyPeopleColumns(shops, members, dateKey, profile) {
-  const day = calendarDateKey(dateKey);
-  if (!day) return [];
+function buildDailyPeopleColumns(shops, members, startKey, endKey, profile) {
+  const start = calendarDateKey(startKey);
+  const end = calendarDateKey(endKey);
+  if (!start || !end || start > end) return [];
   return buildPeopleMetricColumns(shops, members, profile, (shopList) => (
-    computeDailyReportMetrics(shopList, day, day)
+    computeDailyReportMetrics(shopList, start, end)
   ));
 }
 
@@ -1180,12 +1221,13 @@ function dailyMetricCell(metrics, row) {
   return metrics?.[key] ?? 0;
 }
 
-function buildDailySummaryCsv(columns, dateKey) {
+function buildDailySummaryCsv(columns, startKey, endKey) {
+  const rangeLabel = startKey === endKey ? startKey : `${startKey} 至 ${endKey}`;
   const header = ['指标', ...columns.map((col) => col.name)].map(csvEscape).join(',');
   const rows = DAILY_METRIC_ROWS.map((row) => (
     [row.label, ...columns.map((col) => dailyMetricCell(col.metrics, row))].map(csvEscape).join(',')
   ));
-  return [`日期,${csvEscape(dateKey)}`, header, ...rows].join('\r\n') + '\r\n';
+  return [`日期,${csvEscape(rangeLabel)}`, header, ...rows].join('\r\n') + '\r\n';
 }
 
 const CUMULATIVE_METRIC_ROWS = [
@@ -1749,7 +1791,8 @@ export default function App() {
   const [dashTo, setDashTo] = useState(() => todayDateKey());
   const [dashTierFilter, setDashTierFilter] = useState('all');
   const [dashTab, setDashTab] = useState('stats');
-  const [dailyDate, setDailyDate] = useState(() => todayDateKey());
+  const [dailyFrom, setDailyFrom] = useState(() => todayDateKey());
+  const [dailyTo, setDailyTo] = useState(() => todayDateKey());
   const [dailyReportText, setDailyReportText] = useState('');
   const [dailyCopied, setDailyCopied] = useState(false);
   const [selected, setSelected] = useState(null);
@@ -1767,6 +1810,8 @@ export default function App() {
   const [exportMode, setExportMode] = useState('today');
   const [exportDate, setExportDate] = useState(() => todayDateKey());
   const [needsRegion, setNeedsRegion] = useState(false);
+  const [popupOpen, setPopupOpen] = useState(false);
+  const [unitsLogOpen, setUnitsLogOpen] = useState(false);
 
   useEffect(() => {
     if (!configured || !auth) {
@@ -1854,6 +1899,7 @@ export default function App() {
           ? {
             lat: coords.lat,
             lng: coords.lng,
+            ...(coords.city ? { city: coords.city } : {}),
             geocode_query: queryText,
             geocode_failed: false,
             geocode_version: GEOCODE_VERSION,
@@ -1966,9 +2012,6 @@ export default function App() {
       test_case_today: placedToday(shop, 'test_case', today),
       sample_today: placedToday(shop, 'sample', today),
       display_card_today: placedToday(shop, 'display_card', today),
-      wholesale_found_on: localDateKeyFromTimestamp(shop.wholesale_found_on) || String(shop.wholesale_found_on || '').trim(),
-      wholesale_in_store: Boolean(shop.wholesale_in_store || shop.wholesale_found_on),
-      wholesale_today: (localDateKeyFromTimestamp(shop.wholesale_found_on) || String(shop.wholesale_found_on || '').trim()) === today,
       traffic_notes: notes,
       traffic_note: todayNoteText(notes),
       popup_notes: popups,
@@ -1984,6 +2027,8 @@ export default function App() {
     });
     setReportText('');
     setCopied(false);
+    setPopupOpen(false);
+    setUnitsLogOpen(false);
   }
 
   async function toggleStar(shop, e) {
@@ -2019,7 +2064,9 @@ export default function App() {
     const nextTeam = normalizeTeamId(members.find((m) => m.id === assigneeId)?.team_id)
       || normalizeTeamId(draftLike.team_id)
       || normalizeTeamId(profile?.team_id);
-    const city = teamCityPool(nextTeam).includes(draftLike.city) ? draftLike.city : '';
+    const pool = teamCityPool(nextTeam);
+    const fallback = pool.includes(draftLike.city) ? draftLike.city : defaultCity(nextTeam);
+    const city = detectCityFromAddress(draftLike.address, { knownCities: pool, fallback });
     return { ...draftLike, assigned_to: assigneeId, team_id: nextTeam, city };
   }
 
@@ -2034,6 +2081,8 @@ export default function App() {
     setDraft(shop);
     setReportText('');
     setCopied(false);
+    setPopupOpen(false);
+    setUnitsLogOpen(false);
   }
 
   async function saveShop() {
@@ -2065,8 +2114,7 @@ export default function App() {
     const testNext = nextPlacement(prevShop, draft.test_case_today, 'test_case');
     const sampleNext = nextPlacement(prevShop, draft.sample_today, 'sample');
     const cardNext = nextPlacement(prevShop, draft.display_card_today, 'display_card');
-    const wholesaleOn = nextDatedFlag(prevShop.wholesale_found_on, draft.wholesale_today);
-    const nextUnitsLog = mergeUnitsLog(normalizeUnitsLog(prevShop), draft.units_kit_today, draft.units_pod_today);
+    const nextUnitsLog = mergeUnitsLog(normalizeUnitsLog(draft), draft.units_kit_today, draft.units_pod_today);
     const payload = withoutUndefined({
       ...draft,
       name: draft.name.trim(),
@@ -2086,8 +2134,6 @@ export default function App() {
       sample_placed_on: sampleNext.on,
       display_card_placed: cardNext.placed,
       display_card_placed_on: cardNext.on,
-      wholesale_found_on: wholesaleOn,
-      wholesale_in_store: Boolean(wholesaleOn),
     });
     delete payload.id;
     delete payload.created_at;
@@ -2096,6 +2142,8 @@ export default function App() {
     delete payload.sample_today;
     delete payload.display_card_today;
     delete payload.wholesale_today;
+    delete payload.wholesale_found_on;
+    delete payload.wholesale_in_store;
     delete payload.units_today;
     delete payload.units_kit_today;
     delete payload.units_pod_today;
@@ -2105,8 +2153,11 @@ export default function App() {
     delete payload.popup_kit_sold;
     delete payload.popup_pod_sold;
     delete payload.popup_date;
-    payload.city = String(payload.city || '').trim();
-    const { pool, state } = resolveCityContext(payload);
+    const { pool, fallback, state } = resolveCityContext(payload);
+    payload.city = detectCityFromAddress(payload.address, {
+      knownCities: pool,
+      fallback: String(payload.city || '').trim() || fallback,
+    });
     setSaving(true);
     try {
       const geoQuery = geocodeQuery(payload, { state });
@@ -2125,6 +2176,7 @@ export default function App() {
           payload.geocode_query = geoQuery;
           payload.geocode_failed = false;
           payload.geocode_version = GEOCODE_VERSION;
+          if (coords.city) payload.city = coords.city;
         }
       }
       const isManagerUser = profile.role === 'manager';
@@ -2229,16 +2281,15 @@ export default function App() {
       ['地址', draft.address],
       ['评级', draft.tier || '未分级'],
       ['拜访状态', STATUS[draft.status] || draft.status],
+      ['意愿', draft.willingness],
       ['老板', draft.owner_name],
       ['联系方式', draft.phone],
       ['店员', draft.staff_contact],
       ['老板到店规律', draft.owner_schedule],
       ['主要拿货二级批发商', draft.distributor],
-      ['进货情况', draft.restock_status],
       ['是否放 Test Case', draft.test_case_today ? '是' : '否'],
       ['是否放 sample', draft.sample_today ? '是' : '否'],
       ['是否放硬台卡', draft.display_card_today ? '是' : '否'],
-      ['今日发现批发进店', draft.wholesale_today ? '是' : '否'],
       ['今日卖进 KIT', draft.units_kit_today || ''],
       ['今日卖进 POD', draft.units_pod_today || ''],
       ['热卖品牌明细', draft.brands_note],
@@ -2404,8 +2455,8 @@ export default function App() {
   }, [focusedMember, shops, dashFrom, dashTo]);
 
   const dailyPeopleColumns = useMemo(
-    () => buildDailyPeopleColumns(myShops, members, dailyDate, profile),
-    [myShops, members, dailyDate, profile],
+    () => buildDailyPeopleColumns(myShops, members, dailyFrom, dailyTo, profile),
+    [myShops, members, dailyFrom, dailyTo, profile],
   );
 
   const cumulativePeopleColumns = useMemo(
@@ -2414,6 +2465,8 @@ export default function App() {
   );
 
   const draftNoteHistory = draft ? historyNotes(normalizeTrafficNotes(draft)) : [];
+  const draftUnitsHistory = draft ? draftUnitsLogEntries(draft) : [];
+  const canEditDraftUnits = draft ? canEditUnitsLog(profile, user, draft, members) : false;
   const mappedCount = visibleShops.filter(shopHasCoords).length;
   const unmappedCount = visibleShops.filter((s) => geocodeQuery(s) && !shopHasCoords(s)).length;
   const noAddressCount = visibleShops.filter((s) => !geocodeQuery(s)).length;
@@ -2526,6 +2579,7 @@ export default function App() {
               <div className="card-tags">
                 <span className="chip">{s.tier || '未分级'}</span>
                 {STATUS[s.status] && <span className="chip">{STATUS[s.status]}</span>}
+                {s.willingness && <span className="chip">意愿 {s.willingness}</span>}
                 {isChainShop(s) && (
                   <span className="chip">连锁 {s.chain_total_stores} 家{Number(s.chain_a_plus_count) ? ` · A级 ${s.chain_a_plus_count}` : ''}</span>
                 )}
@@ -2764,29 +2818,35 @@ export default function App() {
       )}
       {view === 'dashboard' && (
         <div className="dashboard-page">
-          <nav className="app-tabs dashboard-subtabs" aria-label="看板切换">
-            <button type="button" className={dashTab === 'stats' ? 'on' : ''} onClick={() => setDashTab('stats')}>
-              看板统计
-            </button>
-            <button type="button" className={dashTab === 'daily' ? 'on' : ''} onClick={() => setDashTab('daily')}>
-              日总结
-            </button>
-            <button type="button" className={dashTab === 'cumulative' ? 'on' : ''} onClick={() => setDashTab('cumulative')}>
-              累积总结
-            </button>
-          </nav>
-          {dashTab === 'daily' ? (
+          {profile?.role === 'manager' ? (
+            <nav className="app-tabs dashboard-subtabs" aria-label="看板切换">
+              <button type="button" className={dashTab === 'stats' ? 'on' : ''} onClick={() => setDashTab('stats')}>
+                看板统计
+              </button>
+              <button type="button" className={dashTab === 'daily' ? 'on' : ''} onClick={() => setDashTab('daily')}>
+                日总结
+              </button>
+              <button type="button" className={dashTab === 'cumulative' ? 'on' : ''} onClick={() => setDashTab('cumulative')}>
+                累积总结
+              </button>
+            </nav>
+          ) : null}
+          {profile?.role === 'manager' && dashTab === 'daily' ? (
             <DailySummaryPanel
-              dateKey={dailyDate}
-              onDateChange={setDailyDate}
+              fromKey={dailyFrom}
+              toKey={dailyTo}
+              onFromChange={setDailyFrom}
+              onToChange={setDailyTo}
               columns={dailyPeopleColumns}
               onExport={() => {
-                const day = calendarDateKey(dailyDate);
-                if (!day || !dailyPeopleColumns.length) return;
-                downloadTextFile(`日总结_${day}.csv`, buildDailySummaryCsv(dailyPeopleColumns, day));
+                const start = calendarDateKey(dailyFrom);
+                const end = calendarDateKey(dailyTo);
+                if (!start || !end || start > end || !dailyPeopleColumns.length) return;
+                const name = start === end ? `日总结_${start}.csv` : `日总结_${start}_${end}.csv`;
+                downloadTextFile(name, buildDailySummaryCsv(dailyPeopleColumns, start, end));
               }}
             />
-          ) : dashTab === 'cumulative' ? (
+          ) : profile?.role === 'manager' && dashTab === 'cumulative' ? (
             <CumulativeSummaryPanel
               columns={cumulativePeopleColumns}
               onExport={() => {
@@ -2827,30 +2887,117 @@ export default function App() {
                 <button type="button" onClick={() => setDraft(null)}><X size={18} /></button>
               </div>
             </div>
+            {draft.status === 'visited' && (
+              <div className="soldin-log">
+                <div className="soldin-log-title">卖进记录</div>
+                {draftUnitsHistory.length ? (
+                  <>
+                    <table className="soldin-log-table">
+                      <thead>
+                        <tr>
+                          <th>时间</th>
+                          <th>KIT</th>
+                          <th>POD</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(unitsLogOpen ? draftUnitsHistory : draftUnitsHistory.slice(0, 3)).map((entry) => (
+                          <tr key={entry.date}>
+                            <td>
+                              {canEditDraftUnits ? (
+                                <input
+                                  type="date"
+                                  className="soldin-log-input"
+                                  value={entry.date}
+                                  onChange={(e) => setDraft(applyUnitsLogEntry(draft, entry.date, {
+                                    date: e.target.value,
+                                    kit: entry.kit,
+                                    pod: entry.pod,
+                                  }))}
+                                />
+                              ) : (
+                                formatMonthDay(entry.date) || entry.date
+                              )}
+                            </td>
+                            <td>
+                              {canEditDraftUnits ? (
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="1"
+                                  className="soldin-log-input soldin-log-num"
+                                  value={Number(entry.kit) || 0}
+                                  onChange={(e) => setDraft(applyUnitsLogEntry(draft, entry.date, {
+                                    date: entry.date,
+                                    kit: e.target.value,
+                                    pod: entry.pod,
+                                  }))}
+                                />
+                              ) : (
+                                Number(entry.kit) || 0
+                              )}
+                            </td>
+                            <td>
+                              {canEditDraftUnits ? (
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="1"
+                                  className="soldin-log-input soldin-log-num"
+                                  value={Number(entry.pod) || 0}
+                                  onChange={(e) => setDraft(applyUnitsLogEntry(draft, entry.date, {
+                                    date: entry.date,
+                                    kit: entry.kit,
+                                    pod: e.target.value,
+                                  }))}
+                                />
+                              ) : (
+                                Number(entry.pod) || 0
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {draftUnitsHistory.length > 3 && (
+                      <button
+                        type="button"
+                        className={unitsLogOpen ? 'soldin-log-toggle open' : 'soldin-log-toggle'}
+                        aria-expanded={unitsLogOpen}
+                        onClick={() => setUnitsLogOpen((v) => !v)}
+                      >
+                        <span>{unitsLogOpen ? '收起' : `还有 ${draftUnitsHistory.length - 3} 条`}</span>
+                        <ChevronDown size={16} />
+                      </button>
+                    )}
+                    {!canEditDraftUnits && (
+                      <p className="soldin-log-hint">仅店铺负责人或本区经理可修改卖进记录</p>
+                    )}
+                  </>
+                ) : (
+                  <p className="soldin-log-empty">暂无卖进记录</p>
+                )}
+              </div>
+            )}
             <div className="grid">
               <Field label="店铺名称"><input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></Field>
-              <Field label="城市">
-                <select
-                  value={draft.city || ''}
-                  onChange={(e) => setDraft({ ...draft, city: e.target.value })}
-                >
-                  <option value="">请选择城市</option>
-                  {citySelectOptions(
-                    members.find((m) => m.id === (draft.assigned_to || profile?.id))?.team_id
-                      || draft.team_id
-                      || profile?.team_id,
-                    draft.city,
-                  ).map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
-              </Field>
               <div className="field wide">
                 <span>地址</span>
                 <input
                   value={draft.address}
-                  onChange={(e) => setDraft({ ...draft, address: e.target.value })}
-                  placeholder="填写完整地址"
+                  onChange={(e) => {
+                    const address = e.target.value;
+                    const { pool, fallback } = resolveCityContext(draft);
+                    setDraft({
+                      ...draft,
+                      address,
+                      city: detectCityFromAddress(address, {
+                        knownCities: pool,
+                        fallback: draft.city || fallback,
+                      }),
+                    });
+                  }}
+                  placeholder="填写完整地址（城市会自动解析）"
                 />
               </div>
               <div className="field wide">
@@ -2894,23 +3041,32 @@ export default function App() {
                 </>
               )}
 
-              <Field label="评级">
-                <select value={draft.tier} onChange={(e) => setDraft({ ...draft, tier: e.target.value })}>
-                  {['', 'S', 'A+', 'A', 'B'].map((x) => <option key={x} value={x}>{x || '未分级'}</option>)}
-                </select>
-              </Field>
-              <Field label="拜访状态">
-                <select value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value })}>
-                  {!STATUS[draft.status] && <option value={draft.status || 'not_visited'}>未选择</option>}
-                  {Object.entries(STATUS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                </select>
-              </Field>
-              <Field label="老板 / Decision maker"><input value={draft.owner_name} onChange={(e) => setDraft({ ...draft, owner_name: e.target.value })} /></Field>
-              <Field label="联系方式 / Phone"><input value={draft.phone} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} placeholder="电话、邮箱等" /></Field>
+              <div className="field-row field-row-3">
+                <Field label="评级">
+                  <select value={draft.tier} onChange={(e) => setDraft({ ...draft, tier: e.target.value })}>
+                    {['', 'S', 'A+', 'A', 'B'].map((x) => <option key={x} value={x}>{x || '未分级'}</option>)}
+                  </select>
+                </Field>
+                <Field label="拜访状态">
+                  <select value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value })}>
+                    {!STATUS[draft.status] && <option value={draft.status || 'not_visited'}>未选择</option>}
+                    {Object.entries(STATUS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                  </select>
+                </Field>
+                <Field label="意愿">
+                  <select value={draft.willingness || ''} onChange={(e) => setDraft({ ...draft, willingness: e.target.value })}>
+                    <option value="">未选</option>
+                    {WILLINGNESS_OPTIONS.map((x) => <option key={x} value={x}>{x}</option>)}
+                  </select>
+                </Field>
+              </div>
+              <div className="field-row field-row-tight">
+                <Field label="老板"><input value={draft.owner_name} onChange={(e) => setDraft({ ...draft, owner_name: e.target.value })} /></Field>
+                <Field label="联系方式"><input value={draft.phone} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} placeholder="电话、邮箱等" /></Field>
+              </div>
               <Field label="员工联系人"><input value={draft.staff_contact} onChange={(e) => setDraft({ ...draft, staff_contact: e.target.value })} /></Field>
               <Field label="老板到店规律"><input value={draft.owner_schedule} onChange={(e) => setDraft({ ...draft, owner_schedule: e.target.value })} /></Field>
               <Field label="主要拿货二级批发商"><input value={draft.distributor} onChange={(e) => setDraft({ ...draft, distributor: e.target.value })} /></Field>
-              <Field label="进货情况"><input value={draft.restock_status} onChange={(e) => setDraft({ ...draft, restock_status: e.target.value })} /></Field>
               <PlacementField
                 label="是否放 Test Case"
                 kind="test_case"
@@ -2929,33 +3085,6 @@ export default function App() {
                 draft={draft}
                 onChange={(todayYes) => setDraft({ ...draft, display_card_today: todayYes })}
               />
-              <DatedFlagField
-                label="今日发现批发进店"
-                todayYes={Boolean(draft.wholesale_today)}
-                storedOn={draft.wholesale_found_on}
-                yesLabel="是（今天发现）"
-                onChange={(todayYes) => setDraft({ ...draft, wholesale_today: todayYes })}
-              />
-              <Field label="今日卖进数量-KIT">
-                <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  placeholder="今天卖进 KIT 支数"
-                  value={draft.units_kit_today || ''}
-                  onChange={(e) => setDraft({ ...draft, units_kit_today: e.target.value })}
-                />
-              </Field>
-              <Field label="今日卖进数量-POD">
-                <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  placeholder="今天卖进 POD 支数"
-                  value={draft.units_pod_today || ''}
-                  onChange={(e) => setDraft({ ...draft, units_pod_today: e.target.value })}
-                />
-              </Field>
               {profile?.role === 'manager' && (
                 <Field label="负责人">
                   <select
@@ -2973,6 +3102,49 @@ export default function App() {
                 </Field>
               )}
               <Field wide label="热卖品牌明细"><textarea value={draft.brands_note} onChange={(e) => setDraft({ ...draft, brands_note: e.target.value })} /></Field>
+              <div className="field wide units-today-field">
+                <span>今日卖进</span>
+                <div className="units-pair">
+                  <div className="units-pair-item">
+                    <span>KIT</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      placeholder="支数"
+                      disabled={!canEditDraftUnits}
+                      value={draft.units_kit_today || ''}
+                      onChange={(e) => {
+                        const units_kit_today = e.target.value;
+                        setDraft({
+                          ...draft,
+                          units_kit_today,
+                          units_log: mergeUnitsLog(draft.units_log, units_kit_today, draft.units_pod_today),
+                        });
+                      }}
+                    />
+                  </div>
+                  <div className="units-pair-item">
+                    <span>POD</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      placeholder="支数"
+                      disabled={!canEditDraftUnits}
+                      value={draft.units_pod_today || ''}
+                      onChange={(e) => {
+                        const units_pod_today = e.target.value;
+                        setDraft({
+                          ...draft,
+                          units_pod_today,
+                          units_log: mergeUnitsLog(draft.units_log, draft.units_kit_today, units_pod_today),
+                        });
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
               <div className="field wide">
                 <span>备注</span>
                 {draftNoteHistory.length > 0 && (
@@ -2993,26 +3165,39 @@ export default function App() {
                 />
               </div>
               <div className="field wide popup-field">
-                <div className="popup-head">
+                <button
+                  type="button"
+                  className={popupOpen ? 'popup-toggle open' : 'popup-toggle'}
+                  aria-expanded={popupOpen}
+                  onClick={() => setPopupOpen((v) => !v)}
+                >
                   <span>Pop up</span>
-                  <input
-                    type="date"
-                    value={draft.popup_date || todayDateKey()}
-                    onChange={(e) => setDraft(applyPopupDate(draft, e.target.value))}
-                    aria-label="Pop up 日期"
-                  />
-                </div>
-                <div className="popup-grid">
-                  {POPUP_FIELDS.map((field) => (
-                    <label key={field.key}>
-                      {field.label}
+                  <ChevronDown size={18} />
+                </button>
+                {popupOpen && (
+                  <>
+                    <div className="popup-head">
+                      <span>日期</span>
                       <input
-                        value={draft[field.draftKey] || ''}
-                        onChange={(e) => setDraft({ ...draft, [field.draftKey]: e.target.value })}
+                        type="date"
+                        value={draft.popup_date || todayDateKey()}
+                        onChange={(e) => setDraft(applyPopupDate(draft, e.target.value))}
+                        aria-label="Pop up 日期"
                       />
-                    </label>
-                  ))}
-                </div>
+                    </div>
+                    <div className="popup-grid">
+                      {POPUP_FIELDS.map((field) => (
+                        <label key={field.key}>
+                          {field.label}
+                          <input
+                            value={draft[field.draftKey] || ''}
+                            onChange={(e) => setDraft({ ...draft, [field.draftKey]: e.target.value })}
+                          />
+                        </label>
+                      ))}
+                    </div>
+                  </>
+                )}
               </div>
               <div className="field">
                 <span>下次拜访日期（可选）</span>
@@ -3091,7 +3276,7 @@ export default function App() {
                   href={mapsSearchHref(
                     draft,
                     members.find((m) => m.id === (draft.assigned_to || profile?.id))?.team_id
-                      || profile?.team_id,
+                    || profile?.team_id,
                   )}
                   target="_blank"
                   rel="noreferrer"
@@ -3374,9 +3559,12 @@ function PersonDashboardStrip({ name, teamLabel, dashFrom, dashTo, onFromChange,
   );
 }
 
-function DailySummaryPanel({ dateKey, onDateChange, columns, onExport }) {
+function DailySummaryPanel({ fromKey, toKey, onFromChange, onToChange, columns, onExport }) {
   const today = todayDateKey();
-  const day = calendarDateKey(dateKey);
+  const start = calendarDateKey(fromKey);
+  const end = calendarDateKey(toKey);
+  const invalidRange = !start || !end || start > end;
+  const isToday = start === today && end === today;
   return (
     <section className="dashboard daily-summary">
       <div className="dashboard-head">
@@ -3386,20 +3574,31 @@ function DailySummaryPanel({ dateKey, onDateChange, columns, onExport }) {
         <div className="dashboard-controls">
           <div className="dashboard-range">
             <label>
-              日期
-              <input type="date" value={day} onChange={(e) => onDateChange(e.target.value)} />
+              开始
+              <input type="date" value={start || ''} onChange={(e) => onFromChange(e.target.value)} />
+            </label>
+            <label>
+              结束
+              <input type="date" value={end || ''} onChange={(e) => onToChange(e.target.value)} />
             </label>
           </div>
-          <button type="button" className={day === today ? 'dash-today-btn on' : 'dash-today-btn'} onClick={() => onDateChange(today)}>
+          <button
+            type="button"
+            className={isToday ? 'dash-today-btn on' : 'dash-today-btn'}
+            onClick={() => {
+              onFromChange(today);
+              onToChange(today);
+            }}
+          >
             今天
           </button>
-          <button type="button" className="export-csv" onClick={onExport} disabled={!day || !columns.length}>
+          <button type="button" className="export-csv" onClick={onExport} disabled={invalidRange || !columns.length}>
             <Download size={15} />导出 CSV
           </button>
         </div>
       </div>
-      {!day ? (
-        <p className="dashboard-empty">请选择日期</p>
+      {invalidRange ? (
+        <p className="dashboard-empty">请选择有效的时间段</p>
       ) : columns.length ? (
         <MetricReportTable columns={columns} rows={DAILY_METRIC_ROWS} />
       ) : (
@@ -3727,24 +3926,6 @@ function PlacementField({ label, kind, draft, onChange }) {
       <select value={draft[`${kind}_today`] ? 'yes' : 'no'} onChange={(e) => onChange(e.target.value === 'yes')}>
         <option value="no">否</option>
         <option value="yes">是（今天放）</option>
-      </select>
-    </div>
-  );
-}
-
-function DatedFlagField({ label, todayYes, storedOn, yesLabel = '是（今天）', onChange }) {
-  const today = todayDateKey();
-  const stored = localDateKeyFromTimestamp(storedOn) || String(storedOn || '').trim();
-  const hintDate = todayYes ? today : (stored && stored !== today ? stored : '');
-  const dateText = formatMonthDay(hintDate);
-  const hint = dateText ? `${dateText}已记录` : (stored && !todayYes ? '已记录' : '');
-  return (
-    <div className="field">
-      <span>{label}</span>
-      {hint && <div className="placed-hint">{hint}</div>}
-      <select value={todayYes ? 'yes' : 'no'} onChange={(e) => onChange(e.target.value === 'yes')}>
-        <option value="no">否</option>
-        <option value="yes">{yesLabel}</option>
       </select>
     </div>
   );
