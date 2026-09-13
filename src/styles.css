@@ -482,6 +482,60 @@ code { font-size: 12.5px; }
 .export-editor {
   width: min(440px, 100%);
 }
+.secondary-popup-editor {
+  width: min(560px, 100%);
+}
+.secondary-popup-list {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.secondary-popup-list h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.secondary-popup-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 280px;
+  overflow: auto;
+}
+.secondary-popup-list li {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+.secondary-popup-item {
+  flex: 1;
+  text-align: left;
+  border: 1px solid transparent;
+  background: var(--fill);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.secondary-popup-item strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+.secondary-popup-item span {
+  font-size: 12px;
+  color: var(--muted);
+}
+.secondary-popup-delete {
+  border: none;
+  background: var(--fill);
+  border-radius: 10px;
+  padding: 8px;
+  color: var(--muted);
+}
 .export-hint,
 .export-count {
   margin: 0 0 12px;
@@ -770,6 +824,37 @@ code { font-size: 12.5px; }
   border-collapse: collapse;
   font-size: 13px;
 }
+.daily-summary-tables {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  overflow-x: auto;
+}
+.daily-summary-tables .dashboard-table-wrap {
+  overflow: visible;
+  width: max-content;
+  min-width: 100%;
+}
+.daily-summary-tables .daily-report-table {
+  table-layout: fixed;
+  width: max-content;
+  min-width: 100%;
+}
+.daily-summary-tables .daily-report-table col.metric-col {
+  width: 176px;
+}
+.daily-summary-tables .daily-report-table col.value-col {
+  width: 104px;
+}
+.daily-summary-tables .daily-report-table.multi-day col.value-col {
+  width: 58px;
+}
+.daily-summary-tables .daily-report-table.multi-day th.day-col,
+.daily-summary-tables .daily-report-table.multi-day th.total-col,
+.daily-summary-tables .daily-report-table.multi-day tbody td {
+  padding-left: 6px;
+  padding-right: 6px;
+}
 .dashboard-table th,
 .dashboard-table td {
   padding: 10px 12px;
@@ -797,6 +882,34 @@ code { font-size: 12.5px; }
   font-weight: 500;
   color: var(--ink);
   z-index: 1;
+}
+.daily-report-table.multi-day th.metric-corner {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  vertical-align: middle;
+}
+.daily-report-table.multi-day th.person-group {
+  text-align: center;
+  border-left: 1px solid var(--line);
+}
+.daily-report-table.multi-day th.day-col,
+.daily-report-table.multi-day th.total-col,
+.daily-report-table.multi-day td.total-col {
+  text-align: center;
+  min-width: 52px;
+}
+.daily-report-table.multi-day th.person-start,
+.daily-report-table.multi-day td.person-start {
+  border-left: 1px solid var(--line);
+}
+.daily-report-table.multi-day th.total-col,
+.daily-report-table.multi-day td.total-col {
+  background: #efe8d8;
+  font-weight: 600;
+}
+.daily-report-table.multi-day tbody td {
+  text-align: center;
 }
 .manager-note, .count {
   font-size: 12.5px;

@@ -59,6 +59,14 @@ const STATE_META = {
     names: ['Colorado'],
     bounds: { lat: [36.9, 41.1], lng: [-109.1, -102.0] },
   },
+  OK: {
+    names: ['Oklahoma'],
+    bounds: { lat: [33.6, 37.1], lng: [-103.1, -94.3] },
+  },
+  NC: {
+    names: ['North Carolina'],
+    bounds: { lat: [33.7, 36.7], lng: [-84.4, -75.4] },
+  },
   MI: {
     names: ['Michigan'],
     bounds: { lat: [41.6, 48.4], lng: [-90.5, -82.1] },
@@ -124,7 +132,16 @@ export function resolveState(shop, options = {}) {
   if (explicit && explicit !== 'GL' && STATE_META[explicit]) return explicit;
   const team = String(shop?.team_id || options.teamId || '').trim().toLowerCase();
   if (team === 'denver' || team.includes('denver') || team.includes('colorado')) return 'CO';
-  if (team === 'texas' || team.includes('texas')) return 'TX';
+  if (
+    team === 'texas' || team.includes('texas')
+    || team === 'houston' || team.includes('houston')
+    || team === 'dallas' || team.includes('dallas')
+  ) return 'TX';
+  if (team === 'oklahoma' || team === 'ok' || team.includes('oklahoma')) return 'OK';
+  if (
+    team === 'north_carolina' || team === 'nc'
+    || team.includes('north carolina')
+  ) return 'NC';
   if (
     team === 'florida' || team.includes('florida')
     || team === 'tampa' || team.includes('tampa')

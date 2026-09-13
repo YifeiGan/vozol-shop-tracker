@@ -50,18 +50,30 @@ const FLORIDA_AREAS = [
   { id: 'tampa', label: 'Tampa', cities: TAMPA_AREA_CITIES },
   { id: 'orlando', label: 'Orlando', cities: ORLANDO_AREA_CITIES },
 ];
-const TEXAS_CITIES = [
+const TEXAS_CITIES = ['Houston', 'Dallas'];
+const HOUSTON_AREA_CITIES = [
   'Houston', 'Katy', 'Sugar Land', 'The Woodlands', 'Pearland', 'Cypress', 'Spring',
   'Pasadena', 'League City', 'Humble', 'Conroe', 'Galveston',
-  'Dallas', 'Fort Worth', 'Arlington', 'Plano', 'Irving', 'Garland', 'Frisco',
-  'McKinney', 'Denton', 'Richardson', 'Mesquite', 'Grand Prairie', 'Carrollton',
-  'Allen', 'Lewisville',
   'Austin', 'Round Rock', 'Cedar Park', 'Pflugerville', 'Georgetown', 'San Marcos',
   'San Antonio', 'New Braunfels',
   'El Paso', 'Corpus Christi', 'Lubbock', 'Laredo', 'McAllen', 'Waco',
   'Amarillo', 'Midland', 'Odessa', 'College Station', 'Tyler', 'Beaumont',
   'Brownsville', 'Killeen', 'Abilene',
 ];
+const DALLAS_AREA_CITIES = [
+  'Dallas', 'Fort Worth', 'Arlington', 'Plano', 'Irving', 'Garland', 'Frisco',
+  'McKinney', 'Denton', 'Richardson', 'Mesquite', 'Grand Prairie', 'Carrollton',
+  'Allen', 'Lewisville',
+];
+const TEXAS_AREAS = [
+  { id: 'houston', label: 'Houston', cities: HOUSTON_AREA_CITIES },
+  { id: 'dallas', label: 'Dallas', cities: DALLAS_AREA_CITIES },
+];
+const REGION_AREAS = {
+  florida: FLORIDA_AREAS,
+  texas: TEXAS_AREAS,
+};
+const ALL_REGION_AREAS = [...FLORIDA_AREAS, ...TEXAS_AREAS];
 const DENVER_CITIES = [
   'Denver', 'Aurora', 'Lakewood', 'Thornton', 'Arvada', 'Westminster', 'Centennial',
   'Boulder', 'Broomfield', 'Commerce City', 'Englewood', 'Littleton', 'Parker',
@@ -78,50 +90,120 @@ const GREAT_LAKES_CITIES = [
   'Minneapolis', 'St Paul', 'Duluth',
   'Buffalo', 'Rochester',
 ];
+const OKLAHOMA_CITIES = [
+  'Oklahoma City', 'Tulsa', 'Norman', 'Broken Arrow', 'Edmond', 'Lawton',
+  'Moore', 'Midwest City', 'Enid', 'Stillwater', 'Muskogee', 'Bartlesville',
+  'Owasso', 'Shawnee', 'Yukon', 'Ardmore', 'Ponca City', 'Duncan',
+  'Del City', 'Bixby', 'Mustang', 'Sapulpa', 'Sand Springs', 'Claremore',
+  'Altus', 'McAlester', 'El Reno', 'Chickasha', 'Ada', 'Durant',
+  'Tahlequah', 'Weatherford', 'Jenks', 'Bethany', 'The Village',
+];
+const NORTH_CAROLINA_CITIES = [
+  'Charlotte', 'Raleigh', 'Durham', 'Greensboro', 'Winston-Salem', 'Fayetteville',
+  'Cary', 'Wilmington', 'High Point', 'Concord', 'Asheville', 'Greenville',
+  'Gastonia', 'Jacksonville', 'Chapel Hill', 'Rocky Mount', 'Huntersville',
+  'Burlington', 'Wilson', 'Kannapolis', 'Apex', 'Hickory', 'Wake Forest',
+  'Indian Trail', 'Mooresville', 'Holly Springs', 'Monroe', 'Salisbury',
+  'Matthews', 'New Bern', 'Sanford', 'Garner', 'Cornelius', 'Fuquay-Varina',
+];
 const TEAM_CITIES = {
   florida: FLORIDA_CITIES,
   texas: TEXAS_CITIES,
   denver: DENVER_CITIES,
   great_lakes: GREAT_LAKES_CITIES,
+  oklahoma: OKLAHOMA_CITIES,
+  north_carolina: NORTH_CAROLINA_CITIES,
 };
-const TEAM_ORDER = ['florida', 'texas', 'denver', 'great_lakes'];
+const TEAM_ORDER = ['florida', 'texas', 'denver', 'great_lakes', 'oklahoma', 'north_carolina'];
 const TEAM_LABEL = {
   florida: 'Florida',
   texas: 'Texas',
   denver: 'Denver',
   great_lakes: 'The Great Lakes',
+  oklahoma: 'Oklahoma',
+  north_carolina: 'North Carolina',
 };
-const TEAM_STATE = { florida: 'FL', texas: 'TX', denver: 'CO', great_lakes: 'GL' };
-const TEAM_DEFAULT_CITY = { florida: 'Tampa', texas: 'Houston', denver: 'Denver', great_lakes: 'Chicago' };
+const SIGNUP_REGION_OPTIONS = [
+  { value: 'tampa', label: 'Tampa' },
+  { value: 'orlando', label: 'Orlando' },
+  { value: 'houston', label: 'Houston' },
+  { value: 'dallas', label: 'Dallas' },
+  { value: 'denver', label: 'Denver' },
+  { value: 'great_lakes', label: 'The Great Lakes' },
+  { value: 'oklahoma', label: 'Oklahoma' },
+  { value: 'north_carolina', label: 'North Carolina' },
+];
+const TEAM_STATE = {
+  florida: 'FL',
+  texas: 'TX',
+  denver: 'CO',
+  great_lakes: 'GL',
+  oklahoma: 'OK',
+  north_carolina: 'NC',
+};
+const TEAM_DEFAULT_CITY = {
+  florida: 'Tampa',
+  texas: 'Houston',
+  denver: 'Denver',
+  great_lakes: 'Chicago',
+  oklahoma: 'Oklahoma City',
+  north_carolina: 'Charlotte',
+};
 const TEAM_MAP_VIEW = {
   florida: { center: [28.0, -82.0], zoom: 7 },
   texas: { center: [31.0, -99.9], zoom: 6 },
   denver: { center: [39.7392, -104.9903], zoom: 11 },
   great_lakes: { center: [42.3, -86.0], zoom: 5 },
+  oklahoma: { center: [35.5, -97.5], zoom: 7 },
+  north_carolina: { center: [35.5, -79.8], zoom: 7 },
 };
-const TEAM_SUBTITLE = TEAM_ORDER.map((id) => TEAM_LABEL[id]).join(' · ');
-const STATE_IN_ADDRESS_RE = /\b(FL|TX|CO|MI|IL|OH|WI|IN|MN|Florida|Texas|Colorado|Michigan|Illinois|Ohio|Wisconsin|Indiana|Minnesota)\b/i;
+const TEAM_SUBTITLE = SIGNUP_REGION_OPTIONS.map((opt) => opt.label).join(' · ');
+const STATE_IN_ADDRESS_RE = /\b(FL|TX|CO|OK|NC|MI|IL|OH|WI|IN|MN|Florida|Texas|Colorado|Oklahoma|North Carolina|Michigan|Illinois|Ohio|Wisconsin|Indiana|Minnesota)\b/i;
 
 function teamChoiceHint() {
-  const labels = TEAM_ORDER.map((id) => TEAM_LABEL[id]).filter(Boolean);
+  const labels = SIGNUP_REGION_OPTIONS.map((opt) => opt.label);
   if (labels.length <= 1) return labels[0] || '地区';
   return `${labels.slice(0, -1).join('、')} 或 ${labels[labels.length - 1]}`;
+}
+
+function signupTeamStorageId(value) {
+  const raw = String(value || '').trim();
+  const area = normalizeAreaId(raw);
+  if (isKnownAreaId(area)) return area;
+  return normalizeTeamId(raw);
 }
 
 function normalizeTeamId(value) {
   const key = String(value || '').trim().toLowerCase().replace(/[_-]+/g, ' ');
   if (key === 'florida' || key === 'fl' || key.includes('florida') || key.includes('tampa') || key.includes('orlando')) return 'florida';
-  if (key === 'texas' || key === 'tx' || key.includes('texas')) return 'texas';
+  if (
+    key === 'texas' || key === 'tx' || key.includes('texas')
+    || key.includes('houston') || key.includes('dallas')
+  ) return 'texas';
   if (key === 'denver' || key === 'co' || key.includes('denver') || key.includes('colorado')) return 'denver';
   if (key === 'great lakes' || key === 'great_lakes' || key === 'gl' || key.includes('lakes')) return 'great_lakes';
+  if (key === 'oklahoma' || key === 'ok' || key.includes('oklahoma')) return 'oklahoma';
+  if (
+    key === 'north carolina' || key === 'north_carolina' || key === 'nc'
+    || key.includes('north carolina')
+  ) return 'north_carolina';
   return '';
 }
 
-function cityToFloridaArea(city) {
+function regionAreasOf(regionId) {
+  return REGION_AREAS[normalizeTeamId(regionId)] || [];
+}
+
+function isKnownAreaId(areaId) {
+  return ALL_REGION_AREAS.some((area) => area.id === areaId);
+}
+
+function cityToAreaId(city) {
   const c = String(city || '').trim().toLowerCase();
   if (!c) return '';
-  if (TAMPA_AREA_CITIES.some((name) => name.toLowerCase() === c)) return 'tampa';
-  if (ORLANDO_AREA_CITIES.some((name) => name.toLowerCase() === c)) return 'orlando';
+  for (const area of ALL_REGION_AREAS) {
+    if (area.cities.some((name) => name.toLowerCase() === c)) return area.id;
+  }
   return '';
 }
 
@@ -129,43 +211,54 @@ function normalizeAreaId(value, city) {
   const key = String(value || '').trim().toLowerCase().replace(/[_-]+/g, ' ');
   if (key === 'tampa' || key.includes('tampa')) return 'tampa';
   if (key === 'orlando' || key.includes('orlando')) return 'orlando';
-  return cityToFloridaArea(city);
+  if (key === 'houston' || key.includes('houston')) return 'houston';
+  if (key === 'dallas' || key.includes('dallas') || key.includes('dfw')) return 'dallas';
+  if (key === 'texas' || key === 'tx') return 'houston';
+  return cityToAreaId(city);
 }
 
 function dashboardSectionsFor(regionId) {
-  if (regionId === 'florida') return FLORIDA_AREAS;
+  const areas = regionAreasOf(regionId);
+  if (areas.length) return areas;
   const label = TEAM_LABEL[regionId];
   if (!label) return [];
   return [{ id: regionId, label, cities: TEAM_CITIES[regionId] || [] }];
 }
 
 function shopAreaId(shop, members = []) {
-  const stored = String(shop?.area_id || '').trim().toLowerCase();
-  if (stored === 'tampa' || stored === 'orlando') return stored;
-  const fromCity = cityToFloridaArea(shop?.city);
+  const stored = normalizeAreaId(shop?.area_id);
+  if (isKnownAreaId(stored)) return stored;
+  const fromCity = cityToAreaId(shop?.city);
   if (fromCity) return fromCity;
   const fromTeam = normalizeAreaId(shop?.team_id);
-  if (fromTeam) return fromTeam;
+  if (isKnownAreaId(fromTeam)) return fromTeam;
   const owner = members.find((m) => m.id === shop?.assigned_to);
-  return owner?.area_id || '';
+  return normalizeAreaId(owner?.area_id || owner?.team_id) || '';
 }
 
 function memberAreaId(member, shops = []) {
-  if (member?.area_id === 'tampa' || member?.area_id === 'orlando') return member.area_id;
+  const stored = normalizeAreaId(member?.area_id || member?.team_id);
+  if (isKnownAreaId(stored)) return stored;
   const theirs = shops.filter((s) => s.assigned_to === member?.id);
-  let tampa = 0;
-  let orlando = 0;
+  const counts = {};
   theirs.forEach((s) => {
     const area = shopAreaId(s, [member]);
-    if (area === 'tampa') tampa += 1;
-    if (area === 'orlando') orlando += 1;
+    if (!isKnownAreaId(area)) return;
+    counts[area] = (counts[area] || 0) + 1;
   });
-  if (tampa === 0 && orlando === 0) return '';
-  return tampa >= orlando ? 'tampa' : 'orlando';
+  let best = '';
+  let bestCount = 0;
+  Object.entries(counts).forEach(([area, count]) => {
+    if (count > bestCount) {
+      best = area;
+      bestCount = count;
+    }
+  });
+  return best;
 }
 
 function areaLabelOf(areaId) {
-  return FLORIDA_AREAS.find((area) => area.id === areaId)?.label || '';
+  return ALL_REGION_AREAS.find((area) => area.id === areaId)?.label || '';
 }
 const STATUS = {
   visited: '已卖进',
@@ -206,6 +299,7 @@ function mapsSearchHref(shop, teamId) {
 function emptyShop(teamId) {
   return {
     name: '', address: '', city: '', phone: '', tier: '', status: 'not_visited', willingness: '',
+    sold_in_channel: '',
     team_id: normalizeTeamId(teamId) || '',
     is_chain: false, chain_name: '', chain_total_stores: '', chain_a_plus_count: '', staff_contact: '', owner_name: '',
     owner_schedule: '', contact_role: '', store_number: '', restock_status: '', distributor: '',
@@ -687,6 +781,27 @@ function isDateInRange(dateKey, start, end) {
   return date >= from && date <= to;
 }
 
+function enumerateDateKeys(startKey, endKey) {
+  const start = calendarDateKey(startKey);
+  const end = calendarDateKey(endKey);
+  if (!start || !end || start > end) return [];
+  const days = [];
+  const cursor = new Date(`${start}T12:00:00`);
+  const last = new Date(`${end}T12:00:00`);
+  while (cursor <= last) {
+    days.push(todayDateKey(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return days;
+}
+
+function formatShortDateKey(dateKey) {
+  const key = calendarDateKey(dateKey);
+  if (!key) return '';
+  const [, month, day] = key.split('-');
+  return `${Number(month)}/${Number(day)}`;
+}
+
 function monthStartKey(date = new Date()) {
   const d = date instanceof Date ? date : new Date(date);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
@@ -884,42 +999,77 @@ function computeAreaMetrics(shopList, start, end, headcount = 1) {
   };
 }
 
-const DAILY_METRIC_ROWS = [
+function dailyGroupMetricRows(prefix, visitLabel) {
+  return [
+    { key: `${prefix}Visited`, label: visitLabel },
+    { key: `${prefix}TestCase`, label: '试抽盒投放' },
+    { key: `${prefix}Sample`, label: '样机投放' },
+    { key: `${prefix}DisplayCard`, label: '硬台卡投放', blank: true },
+    { key: `${prefix}SoldIn`, label: '自己卖进店铺数' },
+    { key: `${prefix}Kit`, label: '卖进数量-KIT' },
+    { key: `${prefix}Pod`, label: '卖进数量-POD' },
+    { key: `${prefix}WholesaleSoldIn`, label: '访店发现批发卖进店铺数' },
+    { key: `${prefix}Popup`, label: '活动场次' },
+    { key: `${prefix}PopupKit`, label: '活动卖出支数-KIT' },
+    { key: `${prefix}PopupPod`, label: '活动卖出支数-POD' },
+    { key: `${prefix}Contact`, label: '决策人联系方式' },
+  ];
+}
+
+const DAILY_OVERVIEW_ROWS = [
   { key: 'visited', label: '跑店数量' },
   { key: 'revisit', label: '回访店铺数量' },
-  { key: 'saVisited', label: '访店S/A+' },
-  { key: 'saTestCase', label: '试抽盒投放' },
-  { key: 'saSample', label: '样机投放' },
-  { key: 'saDisplayCard', label: '硬台卡投放', blank: true },
-  { key: 'saSoldIn', label: '自己卖进店铺数' },
-  { key: 'saKit', label: '卖进数量-KIT' },
-  { key: 'saPod', label: '卖进数量-POD' },
-  { key: 'saPopup', label: '活动场次' },
-  { key: 'saPopupKit', label: '活动卖出支数-KIT' },
-  { key: 'saPopupPod', label: '活动卖出支数-POD' },
-  { key: 'saContact', label: '决策人联系方式' },
-  { key: 'abVisited', label: '访店A/B店铺' },
-  { key: 'abTestCase', label: '试抽盒投放' },
-  { key: 'abSample', label: '样机投放' },
-  { key: 'abDisplayCard', label: '硬台卡投放', blank: true },
-  { key: 'abSoldIn', label: '卖进店铺数' },
-  { key: 'abKit', label: '卖进数量-KIT' },
-  { key: 'abPod', label: '卖进数量-POD' },
-  { key: 'abPopup', label: '活动场次' },
-  { key: 'abPopupKit', label: '活动卖出支数-KIT' },
-  { key: 'abPopupPod', label: '活动卖出支数-POD' },
-  { key: 'abContact', label: '决策人联系方式' },
 ];
+
+const DAILY_SA_METRIC_ROWS = dailyGroupMetricRows('sa', '访店S/A+');
+
+const DAILY_AB_METRIC_ROWS = dailyGroupMetricRows('ab', '访店A/B店铺');
+
+const DAILY_METRIC_ROWS = [...DAILY_OVERVIEW_ROWS, ...DAILY_SA_METRIC_ROWS, ...DAILY_AB_METRIC_ROWS];
+
+function normalizeSoldInChannel(value) {
+  return value === 'wholesale' ? 'wholesale' : 'self';
+}
+
+function shopSoldInChannel(shop) {
+  return normalizeSoldInChannel(shop?.sold_in_channel);
+}
+
+function shopStatusSoldInDateKey(shop) {
+  const stamped = calendarDateKey(shop?.sold_in_on);
+  if (stamped) return stamped;
+  const wholesaleOn = calendarDateKey(shop?.wholesale_found_on);
+  if (wholesaleOn) return wholesaleOn;
+  const activity = [...shopActivityDateKeys(shop)].sort();
+  if (activity[0]) return activity[0];
+  return shopCreatedDateKey(shop) || shopUpdatedDateKey(shop) || '';
+}
+
+function shopSoldInInRange(shop, start, end) {
+  if (unitsInRange(shop, start, end) > 0) return true;
+  if (!shopSoldInCumulative(shop)) return false;
+  return isDateInRange(shopStatusSoldInDateKey(shop), start, end);
+}
+
+function shopSelfSoldInInRange(shop, start, end) {
+  return shopSoldInInRange(shop, start, end) && shopSoldInChannel(shop) === 'self';
+}
+
+function shopWholesaleSoldInInRange(shop, start, end) {
+  return shopSoldInInRange(shop, start, end) && shopSoldInChannel(shop) === 'wholesale';
+}
 
 function computeGroupDayMetrics(shopList, start, end) {
   const worked = shopList.filter((s) => shopWorkedInRange(s, start, end));
-  const soldIn = worked.filter((s) => unitsInRange(s, start, end) > 0).length;
+  const soldIn = shopList.filter((s) => shopSelfSoldInInRange(s, start, end)).length;
+  const wholesaleSoldIn = shopList.filter((s) => shopWholesaleSoldInInRange(s, start, end)).length;
   return {
     visited: worked.length,
     testCase: worked.filter((s) => placementInRange(s, 'test_case', start, end)).length,
     sample: worked.filter((s) => placementInRange(s, 'sample', start, end)).length,
     displayCard: worked.filter((s) => placementInRange(s, 'display_card', start, end)).length,
     soldIn,
+    wholesaleSoldIn,
     kit: worked.reduce((sum, s) => sum + unitsInRange(s, start, end, 'kit'), 0),
     pod: worked.reduce((sum, s) => sum + unitsInRange(s, start, end, 'pod'), 0),
     popup: worked.reduce((sum, s) => sum + popupSessionsInRange(s, start, end), 0),
@@ -929,36 +1079,34 @@ function computeGroupDayMetrics(shopList, start, end) {
   };
 }
 
+function withGroupPrefix(metrics, prefix) {
+  return {
+    [`${prefix}Visited`]: metrics.visited,
+    [`${prefix}TestCase`]: metrics.testCase,
+    [`${prefix}Sample`]: metrics.sample,
+    [`${prefix}DisplayCard`]: '',
+    [`${prefix}SoldIn`]: metrics.soldIn,
+    [`${prefix}Kit`]: metrics.kit,
+    [`${prefix}Pod`]: metrics.pod,
+    [`${prefix}WholesaleSoldIn`]: metrics.wholesaleSoldIn,
+    [`${prefix}Popup`]: metrics.popup,
+    [`${prefix}PopupKit`]: metrics.popupKit,
+    [`${prefix}PopupPod`]: metrics.popupPod,
+    [`${prefix}Contact`]: metrics.contact,
+  };
+}
+
 function computeDailyReportMetrics(shopList, start, end) {
   const worked = shopList.filter((s) => shopWorkedInRange(s, start, end));
   const revisit = worked.filter((s) => hasHistoryBefore(s, start)).length;
+  const all = computeGroupDayMetrics(shopList, start, end);
   const sa = computeGroupDayMetrics(shopList.filter((s) => isTierSAPlus(s.tier)), start, end);
   const ab = computeGroupDayMetrics(shopList.filter((s) => isTierAB(s.tier)), start, end);
   return {
-    visited: worked.length,
+    visited: all.visited,
     revisit,
-    saVisited: sa.visited,
-    saTestCase: sa.testCase,
-    saSample: sa.sample,
-    saDisplayCard: '',
-    saSoldIn: sa.soldIn,
-    saKit: sa.kit,
-    saPod: sa.pod,
-    saPopup: sa.popup,
-    saPopupKit: sa.popupKit,
-    saPopupPod: sa.popupPod,
-    saContact: sa.contact,
-    abVisited: ab.visited,
-    abTestCase: ab.testCase,
-    abSample: ab.sample,
-    abDisplayCard: '',
-    abSoldIn: ab.soldIn,
-    abKit: ab.kit,
-    abPod: ab.pod,
-    abPopup: ab.popup,
-    abPopupKit: ab.popupKit,
-    abPopupPod: ab.popupPod,
-    abContact: ab.contact,
+    ...withGroupPrefix(sa, 'sa'),
+    ...withGroupPrefix(ab, 'ab'),
   };
 }
 
@@ -987,8 +1135,9 @@ function groupMembersByTeam(members, profile, shops = []) {
   const sales = members.filter((m) => m.active && m.role !== 'manager');
   const regionId = profile?.role === 'manager' ? normalizeTeamId(profile.team_id) : '';
   const scoped = regionId ? sales.filter((m) => normalizeTeamId(m.team_id) === regionId) : sales;
-  if (regionId === 'florida') {
-    return FLORIDA_AREAS
+  const regionAreas = regionAreasOf(regionId);
+  if (regionAreas.length) {
+    return regionAreas
       .map((area) => ({
         teamId: area.id,
         label: area.label,
@@ -1210,29 +1359,73 @@ function buildDailyPeopleColumns(shops, members, startKey, endKey, profile) {
   const start = calendarDateKey(startKey);
   const end = calendarDateKey(endKey);
   if (!start || !end || start > end) return [];
-  return buildPeopleMetricColumns(shops, members, profile, (shopList) => (
-    computeDailyReportMetrics(shopList, start, end)
-  ));
+  const dayKeys = enumerateDateKeys(start, end);
+  const multiDay = dayKeys.length > 1;
+  return buildPeopleMetricColumns(shops, members, profile, (shopList) => {
+    const metrics = computeDailyReportMetrics(shopList, start, end);
+    if (!multiDay) return metrics;
+    const dayMetrics = {};
+    dayKeys.forEach((day) => {
+      dayMetrics[day] = computeDailyReportMetrics(shopList, day, day);
+    });
+    return { ...metrics, __dayKeys: dayKeys, __dayMetrics: dayMetrics };
+  }).map((col) => {
+    const dayKeysForCol = col.metrics?.__dayKeys || (multiDay ? dayKeys : []);
+    const dayMetrics = col.metrics?.__dayMetrics || {};
+    const { __dayKeys, __dayMetrics, ...metrics } = col.metrics || {};
+    return {
+      ...col,
+      dayKeys: dayKeysForCol,
+      dayMetrics,
+      metrics,
+    };
+  });
 }
 
 function dailyMetricCell(metrics, row) {
-  if (row?.blank || row?.key === 'saDisplayCard' || row?.key === 'abDisplayCard') return '';
+  if (row?.blank) return '';
   const key = typeof row === 'string' ? row : row?.key;
   return metrics?.[key] ?? 0;
 }
 
 function buildDailySummaryCsv(columns, startKey, endKey) {
   const rangeLabel = startKey === endKey ? startKey : `${startKey} 至 ${endKey}`;
-  const header = ['指标', ...columns.map((col) => col.name)].map(csvEscape).join(',');
-  const rows = DAILY_METRIC_ROWS.map((row) => (
-    [row.label, ...columns.map((col) => dailyMetricCell(col.metrics, row))].map(csvEscape).join(',')
-  ));
+  const multiDay = columns.some((col) => (col.dayKeys || []).length > 1);
+  const headerCells = ['指标'];
+  columns.forEach((col) => {
+    if (!multiDay) {
+      headerCells.push(col.name);
+      return;
+    }
+    (col.dayKeys || []).forEach((day) => {
+      headerCells.push(`${col.name} ${formatShortDateKey(day)}`);
+    });
+    headerCells.push(`${col.name} 合计`);
+  });
+  const header = headerCells.map(csvEscape).join(',');
+  const rows = DAILY_METRIC_ROWS.map((row) => {
+    const cells = [row.label];
+    columns.forEach((col) => {
+      if (!multiDay) {
+        cells.push(dailyMetricCell(col.metrics, row));
+        return;
+      }
+      (col.dayKeys || []).forEach((day) => {
+        cells.push(dailyMetricCell(col.dayMetrics?.[day], row));
+      });
+      cells.push(dailyMetricCell(col.metrics, row));
+    });
+    return cells.map(csvEscape).join(',');
+  });
   return [`日期,${csvEscape(rangeLabel)}`, header, ...rows].join('\r\n') + '\r\n';
 }
 
 const CUMULATIVE_METRIC_ROWS = [
   { key: 'totalShops', label: '总店铺数' },
   { key: 'soldInShops', label: '总卖进店铺数量' },
+  { key: 'selfSoldInShops', label: '自己卖进店铺数' },
+  { key: 'selfSoldInKit', label: '自己卖进kit数量' },
+  { key: 'selfSoldInPod', label: '自己卖进pod数量' },
   { key: 'entryRate', label: '进店率' },
   { key: 'sCount', label: 'S级店铺数' },
   { key: 'sSoldIn', label: 'S级店铺卖进' },
@@ -1240,6 +1433,12 @@ const CUMULATIVE_METRIC_ROWS = [
   { key: 'aPlusSoldIn', label: 'A+级店铺卖进' },
   { key: 'abCount', label: 'A/B级店铺数' },
   { key: 'abSoldIn', label: 'A/B级店铺卖进' },
+  { key: 'secondaryPopupSessions', label: '二级pop-up场次' },
+  { key: 'secondaryPopupKit', label: '二级pop-up卖出kit数量' },
+  { key: 'secondaryPopupPod', label: '二级pop-up卖出pod数量' },
+  { key: 'storePopupSessions', label: '门店pop-up场次' },
+  { key: 'storePopupKit', label: '门店pop-up卖出kit数量' },
+  { key: 'storePopupPod', label: '门店pop-up卖出pod数量' },
 ];
 
 function shopSoldInCumulative(shop) {
@@ -1248,19 +1447,56 @@ function shopSoldInCumulative(shop) {
   return normalizeUnitsLog(shop).some((e) => (Number(e.units) || 0) > 0);
 }
 
+function shopSelfSoldInCumulative(shop) {
+  return shopSoldInCumulative(shop) && shopSoldInChannel(shop) === 'self';
+}
+
+function sumUnitsField(shopList, field) {
+  return shopList.reduce(
+    (sum, shop) => sum + normalizeUnitsLog(shop).reduce((n, e) => n + (Number(e[field]) || 0), 0),
+    0,
+  );
+}
+
+function shopPopupSoldTotal(shop, field) {
+  return normalizePopupNotes(shop).reduce((sum, n) => {
+    if (field === 'pod') return sum + (Number(String(n.pod_sold ?? '').trim()) || 0);
+    return sum + (Number(String(n.kit_sold ?? '').trim()) || 0);
+  }, 0);
+}
+
+function shopPopupHasSales(entry) {
+  const kitRaw = String(entry?.kit_sold ?? '').trim();
+  const podRaw = String(entry?.pod_sold ?? '').trim();
+  return kitRaw !== '' || podRaw !== '';
+}
+
+function shopPopupSessionCount(shop) {
+  return normalizePopupNotes(shop).filter(shopPopupHasSales).length;
+}
+
+function sumSecondaryPopupField(popupList, field) {
+  return popupList.reduce((sum, item) => sum + (Number(item?.[field]) || 0), 0);
+}
+
 function isTierAPlusOnly(tier) {
   return tier === 'A+';
 }
 
-function computeCumulativeReportMetrics(shopList) {
+function computeCumulativeReportMetrics(shopList, secondaryPopupList = []) {
   const totalShops = shopList.length;
   const soldInShops = shopList.filter(shopSoldInCumulative).length;
+  const selfShops = shopList.filter((s) => shopSoldInChannel(s) === 'self');
+  const selfSoldInShops = shopList.filter(shopSelfSoldInCumulative).length;
   const sShops = shopList.filter((s) => isTierS(s.tier));
   const aPlusShops = shopList.filter((s) => isTierAPlusOnly(s.tier));
   const abShops = shopList.filter((s) => isTierAB(s.tier));
   return {
     totalShops,
     soldInShops,
+    selfSoldInShops,
+    selfSoldInKit: sumUnitsField(selfShops, 'kit'),
+    selfSoldInPod: sumUnitsField(selfShops, 'pod'),
     entryRate: pct(soldInShops, totalShops),
     sCount: sShops.length,
     sSoldIn: sShops.filter(shopSoldInCumulative).length,
@@ -1268,6 +1504,12 @@ function computeCumulativeReportMetrics(shopList) {
     aPlusSoldIn: aPlusShops.filter(shopSoldInCumulative).length,
     abCount: abShops.length,
     abSoldIn: abShops.filter(shopSoldInCumulative).length,
+    secondaryPopupSessions: secondaryPopupList.length,
+    secondaryPopupKit: sumSecondaryPopupField(secondaryPopupList, 'kit'),
+    secondaryPopupPod: sumSecondaryPopupField(secondaryPopupList, 'pod'),
+    storePopupSessions: shopList.reduce((sum, s) => sum + shopPopupSessionCount(s), 0),
+    storePopupKit: shopList.reduce((sum, s) => sum + shopPopupSoldTotal(s, 'kit'), 0),
+    storePopupPod: shopList.reduce((sum, s) => sum + shopPopupSoldTotal(s, 'pod'), 0),
   };
 }
 
@@ -1287,12 +1529,13 @@ function buildPeopleMetricColumns(shops, members, profile, metricsForShops) {
       name: memberName(m),
       teamId,
       teamLabel: areaLabelOf(areaId) || teamLabelOf(teamId),
-      metrics: metricsForShops(shops.filter((s) => s.assigned_to === m.id)),
+      metrics: metricsForShops(shops.filter((s) => s.assigned_to === m.id), m.id),
     });
   };
   const regionId = normalizeTeamId(profile?.team_id);
-  if (regionId === 'florida') {
-    FLORIDA_AREAS.forEach((area) => {
+  const regionAreas = regionAreasOf(regionId);
+  if (regionAreas.length) {
+    regionAreas.forEach((area) => {
       sales.filter((m) => memberAreaId(m, shops) === area.id).forEach(pushMember);
     });
   }
@@ -1304,8 +1547,13 @@ function buildPeopleMetricColumns(shops, members, profile, metricsForShops) {
   }));
 }
 
-function buildCumulativePeopleColumns(shops, members, profile) {
-  return buildPeopleMetricColumns(shops, members, profile, computeCumulativeReportMetrics);
+function buildCumulativePeopleColumns(shops, members, profile, secondaryPopups = []) {
+  return buildPeopleMetricColumns(shops, members, profile, (shopList, memberId) => (
+    computeCumulativeReportMetrics(
+      shopList,
+      secondaryPopups.filter((p) => p.path_owner === memberId || p.assigned_to === memberId),
+    )
+  ));
 }
 
 function buildCumulativeSummaryCsv(columns) {
@@ -1373,6 +1621,47 @@ function shopDoc(userId, shopId) {
   return doc(db, 'profiles', userId, 'shops', shopId);
 }
 
+function secondaryPopupsCollection(userId) {
+  return collection(db, 'profiles', userId, 'secondary_popups');
+}
+
+function secondaryPopupDoc(userId, popupId) {
+  return doc(db, 'profiles', userId, 'secondary_popups', popupId);
+}
+
+function emptySecondaryPopup() {
+  return {
+    distributor: '',
+    date: todayDateKey(),
+    foot_traffic: '',
+    stores_sold: '',
+    kit: '',
+    pod: '',
+  };
+}
+
+function secondaryPopupFromSnap(item, pathOwner) {
+  const data = item.data() || {};
+  return {
+    id: item.id,
+    ...data,
+    path_owner: pathOwner,
+    date: calendarDateKey(data.date) || String(data.date || '').trim(),
+    distributor: String(data.distributor || '').trim(),
+    foot_traffic: data.foot_traffic ?? '',
+    stores_sold: data.stores_sold ?? '',
+    kit: data.kit ?? '',
+    pod: data.pod ?? '',
+    team_id: normalizeTeamId(data.team_id) || String(data.team_id || '').trim(),
+  };
+}
+
+function formatSecondaryPopupNum(value) {
+  if (value === '' || value == null) return '';
+  const n = Number(value);
+  return Number.isFinite(n) ? n : String(value);
+}
+
 function shopFromSnap(item) {
   const data = item.data();
   const pathOwner = item.ref.parent?.parent?.id || data.assigned_to;
@@ -1399,7 +1688,10 @@ async function ensureProfile(user) {
   const ref = doc(db, 'profiles', user.uid);
   const email = authEmailOf(user);
   const fullName = (pendingSignupName || user.displayName || email.split('@')[0] || '未命名').trim();
-  const teamId = normalizeTeamId(pendingSignupTeam);
+  const signupChoice = String(pendingSignupTeam || '').trim();
+  const regionId = normalizeTeamId(signupChoice);
+  const storageTeamId = signupTeamStorageId(signupChoice);
+  const areaId = normalizeAreaId(signupChoice);
   pendingSignupName = '';
   pendingSignupTeam = '';
 
@@ -1414,7 +1706,7 @@ async function ensureProfile(user) {
     return { ...data, id: snap.id, team_id: normalizeTeamId(data.team_id) || data.team_id, area_id: normalizeAreaId(data.area_id || data.team_id, data.city) };
   }
 
-  if (!teamId) return { needsRegion: true };
+  if (!regionId || !storageTeamId) return { needsRegion: true };
 
   try {
     await user.getIdToken(true);
@@ -1426,11 +1718,17 @@ async function ensureProfile(user) {
     full_name: fullName || '未命名',
     email,
     role: 'sales',
-    team_id: teamId,
+    team_id: storageTeamId,
+    area_id: areaId || '',
     active: true,
   };
   await setDoc(ref, profile);
-  return { id: user.uid, ...profile };
+  return {
+    id: user.uid,
+    ...profile,
+    team_id: regionId,
+    area_id: areaId || normalizeAreaId(storageTeamId),
+  };
 }
 
 async function migrateLegacyShops(currentUser, profile, members) {
@@ -1484,7 +1782,7 @@ async function fetchTeamData(currentUser) {
     20000,
     '读取账号超时。请刷新页面，或检查网络是否拦截了 Firestore。',
   );
-  if (p.needsRegion) return { needsRegion: true, profile: null, shops: [], members: [] };
+  if (p.needsRegion) return { needsRegion: true, profile: null, shops: [], members: [], secondaryPopups: [] };
   let members = [];
   if (p.role === 'manager') {
     let memberSnap;
@@ -1518,7 +1816,17 @@ async function fetchTeamData(currentUser) {
     '读取门店超时。多半是浏览器连不上 Firestore，请硬刷新后再试；若仍失败，换 Chrome 打开同一网址。',
   );
   const shops = shopSnaps.flatMap((shopSnap) => shopSnap.docs.map(shopFromSnap));
-  return { profile: p, shops, members };
+  const popupSnaps = await Promise.all(ownerIds.map(async (id) => {
+    try {
+      return { id, snap: await getDocs(secondaryPopupsCollection(id)) };
+    } catch {
+      return { id, snap: { docs: [] } };
+    }
+  }));
+  const secondaryPopups = popupSnaps
+    .flatMap(({ id, snap }) => snap.docs.map((item) => secondaryPopupFromSnap(item, id)))
+    .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+  return { profile: p, shops, members, secondaryPopups };
 }
 
 function GoogleMark() {
@@ -1560,7 +1868,7 @@ function Login() {
         setErr('请填写姓名');
         return;
       }
-      if (!normalizeTeamId(teamId)) {
+      if (!signupTeamStorageId(teamId)) {
         setErr('请选择地区');
         return;
       }
@@ -1577,7 +1885,7 @@ function Login() {
     try {
       if (signup) {
         pendingSignupName = fullName.trim();
-        pendingSignupTeam = normalizeTeamId(teamId);
+        pendingSignupTeam = signupTeamStorageId(teamId);
         const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
         await updateProfile(cred.user, { displayName: fullName.trim() });
       } else {
@@ -1594,7 +1902,7 @@ function Login() {
 
   const google = async () => {
     setErr('');
-    if (signup && !normalizeTeamId(teamId)) {
+    if (signup && !signupTeamStorageId(teamId)) {
       setErr('请先选择地区');
       return;
     }
@@ -1602,7 +1910,7 @@ function Login() {
     try {
       if (signup) {
         pendingSignupName = fullName.trim();
-        pendingSignupTeam = normalizeTeamId(teamId);
+        pendingSignupTeam = signupTeamStorageId(teamId);
       }
       await signInWithPopup(auth, googleProvider);
     } catch (error) {
@@ -1649,8 +1957,8 @@ function Login() {
               地区
               <select value={teamId} onChange={(e) => setTeamId(e.target.value)} required>
                 <option value="">请选择</option>
-                {TEAM_ORDER.map((id) => (
-                  <option key={id} value={id}>{TEAM_LABEL[id]}</option>
+                {SIGNUP_REGION_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
                 ))}
               </select>
             </label>
@@ -1720,14 +2028,14 @@ function RegionGate({ user, onDone }) {
 
   async function submit(e) {
     e.preventDefault();
-    const team = normalizeTeamId(teamId);
-    if (!team) {
+    const storageTeam = signupTeamStorageId(teamId);
+    if (!storageTeam) {
       setErr('请选择地区');
       return;
     }
     setErr('');
     setBusy(true);
-    pendingSignupTeam = team;
+    pendingSignupTeam = storageTeam;
     pendingSignupName = user.displayName || '';
     try {
       const data = await fetchTeamData(user);
@@ -1753,8 +2061,8 @@ function RegionGate({ user, onDone }) {
           地区
           <select value={teamId} onChange={(e) => setTeamId(e.target.value)} required>
             <option value="">请选择</option>
-            {TEAM_ORDER.map((id) => (
-              <option key={id} value={id}>{TEAM_LABEL[id]}</option>
+            {SIGNUP_REGION_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
             ))}
           </select>
         </label>
@@ -1773,6 +2081,7 @@ export default function App() {
   const [profile, setProfile] = useState(null);
   const [shops, setShops] = useState([]);
   const [members, setMembers] = useState([]);
+  const [secondaryPopups, setSecondaryPopups] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [search, setSearch] = useState('');
@@ -1812,6 +2121,10 @@ export default function App() {
   const [needsRegion, setNeedsRegion] = useState(false);
   const [popupOpen, setPopupOpen] = useState(false);
   const [unitsLogOpen, setUnitsLogOpen] = useState(false);
+  const [secondaryPopupOpen, setSecondaryPopupOpen] = useState(false);
+  const [secondaryPopupDraft, setSecondaryPopupDraft] = useState(() => emptySecondaryPopup());
+  const [secondaryPopupEditingId, setSecondaryPopupEditingId] = useState(null);
+  const [secondaryPopupSaving, setSecondaryPopupSaving] = useState(false);
 
   useEffect(() => {
     if (!configured || !auth) {
@@ -1825,6 +2138,7 @@ export default function App() {
         setProfile(null);
         setShops([]);
         setMembers([]);
+        setSecondaryPopups([]);
         setNeedsRegion(false);
         setLoadError('');
         setLoading(false);
@@ -1840,11 +2154,13 @@ export default function App() {
           setProfile(null);
           setShops([]);
           setMembers([]);
+          setSecondaryPopups([]);
         } else {
           setNeedsRegion(false);
           setProfile(data.profile);
           setShops(data.shops);
           setMembers(data.members);
+          setSecondaryPopups(data.secondaryPopups || []);
         }
       } catch (error) {
         if (cancelled) return;
@@ -1976,11 +2292,13 @@ export default function App() {
         setProfile(null);
         setShops([]);
         setMembers([]);
+        setSecondaryPopups([]);
       } else {
         setNeedsRegion(false);
         setProfile(data.profile);
         setShops(data.shops);
         setMembers(data.members);
+        setSecondaryPopups(data.secondaryPopups || []);
       }
     } catch (error) {
       setLoadError(readErrorMessage(error));
@@ -2003,6 +2321,9 @@ export default function App() {
       next_plan_date: shop.next_plan_date || '',
       next_plan_time: shop.next_plan_time || '',
       starred: Boolean(shop.starred),
+      sold_in_channel: shop.status === 'visited'
+        ? normalizeSoldInChannel(shop.sold_in_channel)
+        : (shop.sold_in_channel || ''),
       test_case_placed: isPlaced(shop, 'test_case'),
       sample_placed: isPlaced(shop, 'sample'),
       display_card_placed: isPlaced(shop, 'display_card'),
@@ -2134,6 +2455,12 @@ export default function App() {
       sample_placed_on: sampleNext.on,
       display_card_placed: cardNext.placed,
       display_card_placed_on: cardNext.on,
+      sold_in_on: draft.status === 'visited'
+        ? (calendarDateKey(prevShop.sold_in_on) || calendarDateKey(draft.sold_in_on) || todayDateKey())
+        : (calendarDateKey(prevShop.sold_in_on) || calendarDateKey(draft.sold_in_on) || ''),
+      sold_in_channel: draft.status === 'visited'
+        ? normalizeSoldInChannel(draft.sold_in_channel)
+        : '',
     });
     delete payload.id;
     delete payload.created_at;
@@ -2187,9 +2514,9 @@ export default function App() {
         || 'florida';
       payload.assigned_to = assigneeId;
       payload.team_id = assigneeTeam;
-      if (assigneeTeam === 'florida') {
-        payload.area_id = cityToFloridaArea(payload.city)
-          || normalizeAreaId(members.find((m) => m.id === assigneeId)?.area_id)
+      if (regionAreasOf(assigneeTeam).length) {
+        payload.area_id = cityToAreaId(payload.city)
+          || normalizeAreaId(members.find((m) => m.id === assigneeId)?.area_id || members.find((m) => m.id === assigneeId)?.team_id)
           || '';
       }
       if (selected === 'new') {
@@ -2211,9 +2538,9 @@ export default function App() {
         payload.team_id = isManagerUser
           ? (normalizeTeamId(members.find((m) => m.id === newOwner)?.team_id) || normalizeTeamId(current?.team_id) || assigneeTeam)
           : (normalizeTeamId(current?.team_id) || assigneeTeam);
-        if (payload.team_id === 'florida') {
-          payload.area_id = cityToFloridaArea(payload.city)
-            || normalizeAreaId(members.find((m) => m.id === payload.assigned_to)?.area_id)
+        if (regionAreasOf(payload.team_id).length) {
+          payload.area_id = cityToAreaId(payload.city)
+            || normalizeAreaId(members.find((m) => m.id === payload.assigned_to)?.area_id || members.find((m) => m.id === payload.assigned_to)?.team_id)
             || current?.area_id
             || '';
         }
@@ -2281,6 +2608,9 @@ export default function App() {
       ['地址', draft.address],
       ['评级', draft.tier || '未分级'],
       ['拜访状态', STATUS[draft.status] || draft.status],
+      ['卖进方式', draft.status === 'visited'
+        ? (normalizeSoldInChannel(draft.sold_in_channel) === 'wholesale' ? '批发卖进' : '自己卖进')
+        : ''],
       ['意愿', draft.willingness],
       ['老板', draft.owner_name],
       ['联系方式', draft.phone],
@@ -2410,14 +2740,14 @@ export default function App() {
       const sales = members.filter((m) => m.active && m.role !== 'manager' && normalizeTeamId(m.team_id) === regionId);
       const regions = dashboardSectionsFor(regionId).map((section) => {
         const allRegionShops = myShops.filter((s) => {
-          if (section.id === 'tampa' || section.id === 'orlando') {
+          if (isKnownAreaId(section.id)) {
             return shopAreaId(s, members) === section.id;
           }
           return true;
         });
         const regionShops = filterShopsByTier(allRegionShops, dashTierFilter);
         const regionMembers = sales.filter((m) => {
-          if (section.id === 'tampa' || section.id === 'orlando') {
+          if (isKnownAreaId(section.id)) {
             return memberAreaId(m, myShops) === section.id;
           }
           return true;
@@ -2460,8 +2790,8 @@ export default function App() {
   );
 
   const cumulativePeopleColumns = useMemo(
-    () => buildCumulativePeopleColumns(myShops, members, profile),
-    [myShops, members, profile],
+    () => buildCumulativePeopleColumns(myShops, members, profile, secondaryPopups),
+    [myShops, members, profile, secondaryPopups],
   );
 
   const draftNoteHistory = draft ? historyNotes(normalizeTrafficNotes(draft)) : [];
@@ -2498,6 +2828,112 @@ export default function App() {
     setExportOpen(false);
   }
 
+  function secondaryPopupOwnerId() {
+    return user?.uid || profile?.id || '';
+  }
+
+  const visibleSecondaryPopups = useMemo(() => {
+    const ownerId = secondaryPopupOwnerId();
+    if (!ownerId) return [];
+    return secondaryPopups.filter((p) => p.path_owner === ownerId);
+  }, [secondaryPopups, user, profile]);
+
+  function openSecondaryPopupModal() {
+    setSecondaryPopupDraft(emptySecondaryPopup());
+    setSecondaryPopupEditingId(null);
+    setSecondaryPopupOpen(true);
+  }
+
+  function editSecondaryPopup(record) {
+    setSecondaryPopupDraft({
+      distributor: record.distributor || '',
+      date: calendarDateKey(record.date) || todayDateKey(),
+      foot_traffic: record.foot_traffic === 0 || record.foot_traffic ? String(record.foot_traffic) : '',
+      stores_sold: record.stores_sold === 0 || record.stores_sold ? String(record.stores_sold) : '',
+      kit: record.kit === 0 || record.kit ? String(record.kit) : '',
+      pod: record.pod === 0 || record.pod ? String(record.pod) : '',
+    });
+    setSecondaryPopupEditingId(record.id);
+    setSecondaryPopupOpen(true);
+  }
+
+  async function saveSecondaryPopup() {
+    const ownerId = secondaryPopupOwnerId();
+    if (!ownerId || !profile) return;
+    const date = calendarDateKey(secondaryPopupDraft.date);
+    if (!date) {
+      alert('请填写日期');
+      return;
+    }
+    const distributor = String(secondaryPopupDraft.distributor || '').trim();
+    if (!distributor) {
+      alert('请填写批发商');
+      return;
+    }
+    const ownerMember = members.find((m) => m.id === ownerId);
+    const teamId = normalizeTeamId(ownerMember?.team_id) || normalizeTeamId(profile.team_id) || '';
+    const payload = withoutUndefined({
+      distributor,
+      date,
+      foot_traffic: formatSecondaryPopupNum(secondaryPopupDraft.foot_traffic),
+      stores_sold: formatSecondaryPopupNum(secondaryPopupDraft.stores_sold),
+      kit: formatSecondaryPopupNum(secondaryPopupDraft.kit),
+      pod: formatSecondaryPopupNum(secondaryPopupDraft.pod),
+      team_id: teamId,
+      assigned_to: ownerId,
+      updated_at: serverTimestamp(),
+    });
+    setSecondaryPopupSaving(true);
+    try {
+      if (secondaryPopupEditingId) {
+        const existing = secondaryPopups.find((p) => p.id === secondaryPopupEditingId);
+        const pathOwner = existing?.path_owner || ownerId;
+        await updateDoc(secondaryPopupDoc(pathOwner, secondaryPopupEditingId), payload);
+        setSecondaryPopups((prev) => prev
+          .map((p) => (p.id === secondaryPopupEditingId
+            ? { ...p, ...payload, path_owner: pathOwner, updated_at: new Date() }
+            : p))
+          .sort((a, b) => String(b.date || '').localeCompare(String(a.date || ''))));
+      } else {
+        const ref = await addDoc(secondaryPopupsCollection(ownerId), {
+          ...payload,
+          created_at: serverTimestamp(),
+        });
+        setSecondaryPopups((prev) => [
+          {
+            id: ref.id,
+            ...payload,
+            path_owner: ownerId,
+            created_at: new Date(),
+            updated_at: new Date(),
+          },
+          ...prev,
+        ].sort((a, b) => String(b.date || '').localeCompare(String(a.date || ''))));
+      }
+      setSecondaryPopupDraft(emptySecondaryPopup());
+      setSecondaryPopupEditingId(null);
+    } catch (error) {
+      alert(error.message);
+    } finally {
+      setSecondaryPopupSaving(false);
+    }
+  }
+
+  async function deleteSecondaryPopup(record) {
+    if (!record?.id || !record?.path_owner) return;
+    if (!window.confirm('确定删除这条二级 Pop up 记录？')) return;
+    try {
+      await deleteDoc(secondaryPopupDoc(record.path_owner, record.id));
+      setSecondaryPopups((prev) => prev.filter((p) => p.id !== record.id));
+      if (secondaryPopupEditingId === record.id) {
+        setSecondaryPopupDraft(emptySecondaryPopup());
+        setSecondaryPopupEditingId(null);
+      }
+    } catch (error) {
+      alert(error.message);
+    }
+  }
+
   const filterBar = (
     <section className="filters">
       <button
@@ -2514,6 +2950,9 @@ export default function App() {
             <Download size={15} />导出 CSV
           </button>
         )}
+        <button className="primary add-shop" type="button" onClick={openSecondaryPopupModal}>
+          <Plus size={15} />pop-up记录
+        </button>
         <button className="primary add-shop" type="button" onClick={openNew}>
           <Plus size={15} />添加店铺
         </button>
@@ -3048,7 +3487,19 @@ export default function App() {
                   </select>
                 </Field>
                 <Field label="拜访状态">
-                  <select value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value })}>
+                  <select
+                    value={draft.status}
+                    onChange={(e) => {
+                      const status = e.target.value;
+                      setDraft({
+                        ...draft,
+                        status,
+                        sold_in_channel: status === 'visited'
+                          ? normalizeSoldInChannel(draft.sold_in_channel)
+                          : '',
+                      });
+                    }}
+                  >
                     {!STATUS[draft.status] && <option value={draft.status || 'not_visited'}>未选择</option>}
                     {Object.entries(STATUS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                   </select>
@@ -3060,6 +3511,17 @@ export default function App() {
                   </select>
                 </Field>
               </div>
+              {draft.status === 'visited' && (
+                <Field label="卖进方式">
+                  <select
+                    value={normalizeSoldInChannel(draft.sold_in_channel)}
+                    onChange={(e) => setDraft({ ...draft, sold_in_channel: e.target.value })}
+                  >
+                    <option value="self">自己卖进</option>
+                    <option value="wholesale">批发卖进</option>
+                  </select>
+                </Field>
+              )}
               <div className="field-row field-row-tight">
                 <Field label="老板"><input value={draft.owner_name} onChange={(e) => setDraft({ ...draft, owner_name: e.target.value })} /></Field>
                 <Field label="联系方式"><input value={draft.phone} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} placeholder="电话、邮箱等" /></Field>
@@ -3457,6 +3919,122 @@ export default function App() {
           </div>
         </div>
       )}
+      {secondaryPopupOpen && (
+        <div className="modal" onMouseDown={() => setSecondaryPopupOpen(false)}>
+          <div className="editor secondary-popup-editor" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="editorhead">
+              <h2>二级 Pop up 记录</h2>
+              <button type="button" onClick={() => setSecondaryPopupOpen(false)}><X size={18} /></button>
+            </div>
+            <div className="grid">
+              <Field label="批发商">
+                <input
+                  value={secondaryPopupDraft.distributor}
+                  onChange={(e) => setSecondaryPopupDraft({ ...secondaryPopupDraft, distributor: e.target.value })}
+                  placeholder="批发商名称"
+                />
+              </Field>
+              <Field label="日期">
+                <input
+                  type="date"
+                  value={secondaryPopupDraft.date || ''}
+                  onChange={(e) => setSecondaryPopupDraft({ ...secondaryPopupDraft, date: e.target.value })}
+                />
+              </Field>
+              <Field label="人流量">
+                <input
+                  value={secondaryPopupDraft.foot_traffic}
+                  onChange={(e) => setSecondaryPopupDraft({ ...secondaryPopupDraft, foot_traffic: e.target.value })}
+                  placeholder="人流量"
+                />
+              </Field>
+              <Field label="卖进门店数量">
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={secondaryPopupDraft.stores_sold}
+                  onChange={(e) => setSecondaryPopupDraft({ ...secondaryPopupDraft, stores_sold: e.target.value })}
+                />
+              </Field>
+              <Field label="卖进 kit 数量">
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={secondaryPopupDraft.kit}
+                  onChange={(e) => setSecondaryPopupDraft({ ...secondaryPopupDraft, kit: e.target.value })}
+                />
+              </Field>
+              <Field label="卖进 pod 数量">
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={secondaryPopupDraft.pod}
+                  onChange={(e) => setSecondaryPopupDraft({ ...secondaryPopupDraft, pod: e.target.value })}
+                />
+              </Field>
+            </div>
+            <footer>
+              {secondaryPopupEditingId ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSecondaryPopupDraft(emptySecondaryPopup());
+                    setSecondaryPopupEditingId(null);
+                  }}
+                >
+                  新建
+                </button>
+              ) : (
+                <button type="button" onClick={() => setSecondaryPopupOpen(false)}>取消</button>
+              )}
+              <button
+                className="primary"
+                type="button"
+                disabled={secondaryPopupSaving}
+                onClick={saveSecondaryPopup}
+              >
+                <Save size={15} />{secondaryPopupEditingId ? '保存修改' : '保存记录'}
+              </button>
+            </footer>
+            <div className="secondary-popup-list">
+              <h3>已保存记录</h3>
+              {visibleSecondaryPopups.length === 0 ? (
+                <p className="export-hint">暂无记录</p>
+              ) : (
+                <ul>
+                  {visibleSecondaryPopups.map((record) => (
+                    <li key={record.id}>
+                      <button type="button" className="secondary-popup-item" onClick={() => editSecondaryPopup(record)}>
+                        <strong>{record.distributor || '未命名批发商'}</strong>
+                        <span>
+                          {formatShortDateKey(record.date) || record.date}
+                          {' · '}
+                          门店 {record.stores_sold || 0}
+                          {' · '}
+                          KIT {record.kit || 0}
+                          {' · '}
+                          POD {record.pod || 0}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary-popup-delete"
+                        aria-label="删除记录"
+                        onClick={() => deleteSecondaryPopup(record)}
+                      >
+                        <X size={16} />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       {accountOpen && (
         <AccountEditor
           user={user}
@@ -3600,7 +4178,11 @@ function DailySummaryPanel({ fromKey, toKey, onFromChange, onToChange, columns, 
       {invalidRange ? (
         <p className="dashboard-empty">请选择有效的时间段</p>
       ) : columns.length ? (
-        <MetricReportTable columns={columns} rows={DAILY_METRIC_ROWS} />
+        <div className="daily-summary-tables">
+          <MetricReportTable columns={columns} rows={DAILY_OVERVIEW_ROWS} showDailyBreakdown />
+          <MetricReportTable columns={columns} rows={DAILY_SA_METRIC_ROWS} showDailyBreakdown />
+          <MetricReportTable columns={columns} rows={DAILY_AB_METRIC_ROWS} showDailyBreakdown />
+        </div>
       ) : (
         <p className="dashboard-empty">暂无成员数据</p>
       )}
@@ -3630,24 +4212,76 @@ function CumulativeSummaryPanel({ columns, onExport }) {
   );
 }
 
-function MetricReportTable({ columns, rows }) {
+function MetricReportTable({ columns, rows, showDailyBreakdown = false }) {
+  const multiDay = showDailyBreakdown && columns.some((col) => (col.dayKeys || []).length > 1);
+  const valueColCount = multiDay
+    ? columns.reduce((n, col) => n + (col.dayKeys?.length || 0) + 1, 0)
+    : columns.length;
   return (
     <div className="dashboard-table-wrap">
-      <table className="dashboard-table daily-report-table">
+      <table className={multiDay ? 'dashboard-table daily-report-table multi-day' : 'dashboard-table daily-report-table'}>
+        <colgroup>
+          <col className="metric-col" />
+          {Array.from({ length: valueColCount }, (_, i) => (
+            <col key={i} className="value-col" />
+          ))}
+        </colgroup>
         <thead>
-          <tr>
-            <th>指标</th>
-            {columns.map((col) => (
-              <th key={col.id}>{col.name}</th>
-            ))}
-          </tr>
+          {multiDay ? (
+            <>
+              <tr>
+                <th rowSpan={2} className="metric-corner">指标</th>
+                {columns.map((col) => (
+                  <th key={col.id} colSpan={(col.dayKeys?.length || 0) + 1} className="person-group">
+                    {col.name}
+                  </th>
+                ))}
+              </tr>
+              <tr>
+                {columns.map((col) => (
+                  <React.Fragment key={`${col.id}-days`}>
+                    {(col.dayKeys || []).map((day, dayIndex) => (
+                      <th
+                        key={`${col.id}-${day}`}
+                        className={dayIndex === 0 ? 'day-col person-start' : 'day-col'}
+                      >
+                        {formatShortDateKey(day)}
+                      </th>
+                    ))}
+                    <th key={`${col.id}-total`} className="total-col">合计</th>
+                  </React.Fragment>
+                ))}
+              </tr>
+            </>
+          ) : (
+            <tr>
+              <th>指标</th>
+              {columns.map((col) => (
+                <th key={col.id}>{col.name}</th>
+              ))}
+            </tr>
+          )}
         </thead>
         <tbody>
           {rows.map((row) => (
             <tr key={row.key}>
               <th scope="row">{row.label}</th>
               {columns.map((col) => (
-                <td key={col.id}>{dailyMetricCell(col.metrics, row)}</td>
+                multiDay ? (
+                  <React.Fragment key={col.id}>
+                    {(col.dayKeys || []).map((day, dayIndex) => (
+                      <td
+                        key={`${col.id}-${day}`}
+                        className={dayIndex === 0 ? 'person-start' : undefined}
+                      >
+                        {dailyMetricCell(col.dayMetrics?.[day], row)}
+                      </td>
+                    ))}
+                    <td key={`${col.id}-total`} className="total-col">{dailyMetricCell(col.metrics, row)}</td>
+                  </React.Fragment>
+                ) : (
+                  <td key={col.id}>{dailyMetricCell(col.metrics, row)}</td>
+                )
               ))}
             </tr>
           ))}

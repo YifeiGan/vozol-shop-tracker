@@ -78,6 +78,18 @@ service cloud.firestore {
           allow read, create, update, delete: if canAccessOwnedShop(userId);
         }
       }
+
+      match /secondary_popups/{popupId} {
+        allow read: if canAccessOwnedShop(userId);
+
+        allow create: if hasProfile()
+          && (
+            request.auth.uid == userId
+            || isManager()
+          );
+
+        allow update, delete: if canAccessOwnedShop(userId);
+      }
     }
 
     // Legacy top-level shops: read + delete only so the app can move them under profiles.
